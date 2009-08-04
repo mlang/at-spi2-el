@@ -22,6 +22,10 @@
 
 ;; 
 
+
+;;; History:
+;; 
+
 ;;; Code:
 
 (require 'dbus)
@@ -44,7 +48,36 @@
     :link :input-method-window)
   "List of object roles.")
 
+(defconst atspi-state-keywords
+  '(:invalid :active :armed :busy :checked :collapsed :defunct :editable
+    :enabled :expandable :expanded :focusable :focused :has-tooltip
+    :horizontal :iconified :modal :multi-line :multiselectable :opaque
+    :pressed :resizable :selectable :selected :sensitive :showing :single-line
+    :stale :transient :vertical :visible :manages-descendants :indeterminate
+    :required :truncated :animated :invalid-entry :supports-autocompletion
+    :selectable-text :is-default :visited)
+  "List of object states.")
+
+(defconst atspi-registry-service "org.freedesktop.atspi.Registry"
+  "The ATSPI DBus Registry service name.")
+
+(defconst atspi-registry-path "/org/freedesktop/atspi/registry"
+  "The DBus path of the ATSPI registry.")
+
+(defconst atspi-registry-interface "org.freedesktop.atspi.Registry"
+  "The ATSPI DBus Registry interface name.")
+
+(defconst atspi-accessible-interface "org.freedesktop.atspi.Accessible"
+  "The ATSPI DBus Accessible interface name.")
+
+(defconst atspi-action-interface "org.freedesktop.atspi.Action"
+  "The ATSPI DBus Action interface name.")
+
+(defconst atspi-text-interface "org.freedesktop.atspi.Text"
+  "The ATSPI DBus Text interface name.")
+
 (defun atspi-get-role-from-integer (value)
+  "Convert VALUE (a integer) to a ATSPI role (a symbol)."
   (check-type value integer)
   (nth value atspi-role-keywords))
 
@@ -52,8 +85,23 @@
   "Gets all the currently registered applications.
 Returns a list of service names."
   (dbus-call-method
-   :session "org.freedesktop.atspi.Registry" "/org/freedesktop/atspi/registry"
-   "org.freedesktop.atspi.Registry" "getApplications"))
+   :session atspi-registry-service atspi-registry-path
+   atspi-registry-interface "getApplications"))
+
+(defvar atspi-registry-update-applications-signal-handler nil
+  "If non-nil the signal handler information returned from `dbus-register-signal'.")
+
+(defun atspi-registry-update-applicatiopns-handler (what service)
+  "Informs us WHAT has changed about SERVICE."
+  (message "Device %s was %S" service what))
+
+(defun atspi-registry-install-update-applications-handler ()
+  "Install `atspi-registry-update-applicatiopns-handler'."
+  (setq atspi-registry-update-applications-signal-handler
+        (dbus-register-signal
+         :session atspi-registry-service atspi-registry-path
+	 atspi-registry-interface "updateApplications"
+	 'atspi-update-applicatiopns-handler)))
 
 ;;; Tree of accessible objects
 
@@ -89,7 +137,7 @@ Returns a list of service names."
 
 ;; Predicates
 (mapcar (lambda (role)
-	  (eval 
+	  (eval
 	   `(defun ,(intern (concat "atspi-tree-entry-role-"
 				    (substring (symbol-name role) 1)
 				    "-p"))
@@ -119,12 +167,8 @@ Returns a list of service names."
    :session application
    "/org/freedesktop/atspi/tree" "org.freedesktop.atspi.Tree" "getRoot"))
 
-(defconst atspi-accessible-interface "org.freedesktop.atspi.Accessible"
-  "The ATSPI DBus Accessible interface name.")
-(defconst atspi-text-interface "org.freedesktop.atspi.Text"
-  "The ATSPI DBus Text interface name.")
 (defun atspi-text-get-text (service path &optional start end)
-  "Obtain all or part of the textual content of a Text object."
+  "Obtain all or part of the textual content of a Text object at PATH from SERVICE."
   (unless start (setq start 0))
   (unless end (setq end -1))
   (dbus-call-method :session service path atspi-text-interface "getText"
@@ -149,6 +193,18 @@ Returns a list of service names."
 other accessible objects."
   (atspi-call-accessible-method service path "getRelationSet"))
 
+(defun atspi-accessible-get-state (service path)
+  "Get the current state of accessible object at PATH of SERVICE."
+  (multiple-value-bind (lower upper)
+      (atspi-call-accessible-method service path "getState")
+    (let ((bit 31) stateset)
+      (while (>= bit 0)
+	(if (>= lower (expt 2.0 bit))
+	    (setq stateset (cons (nth bit atspi-state-keywords) stateset)
+		  lower (- lower (expt 2.0 bit))))
+	(setq bit (1- bit)))
+    stateset)))
+
 (defun atspi-accessible-get-role (service path)
   "Get the Role indicating the type of ui role played by PATH of SERVICE."
   (atspi-get-role-from-integer
@@ -169,12 +225,12 @@ other accessible objects."
 			   (cons (atspi-tree-entry-get-name info)
 				 (atspi-tree-entry-get-path info)))
 			 (remove-if-not
-			  #'atspi-tree-entry-menu-item-p
+			  #'atspi-tree-entry-role-menu-item-p
 			  (atspi-get-tree application)))))
      (let ((action (completing-read "Menu item: " alist)))
        (list application (cdr (assoc action alist))))))
-  (check-type application string)
-  (check-type accessible string)
+  (check-type service string)
+  (check-type path string)
   (unless do-action (setq do-action "click"))
   (let* ((actions (atspi-call-action-method service path "getActions"))
 	 (index (position do-action actions :key 'car :test #'string=)))
@@ -186,6 +242,20 @@ other accessible objects."
     (when (> (length objects) 0)
       (let ((object (car objects)))
 	(atspi-text-get-character-count service (atspi-tree-entry-get-path object))))))
+
+;;; Application Cache
+
+(defvar atspi-applications nil
+  "An alist.")
+
+(defun atspi-applications (&optional reload)
+  (if (and applications (not reload))
+      atspi-applications
+    (setq atspi-applications
+	  (mapcar (lambda (service)
+		    (cons service (atspi-get-tree service)))
+		  (atspi-registry-get-applications)))))
+
 
 (provide 'atspi)
 ;;; atspi.el ends here
