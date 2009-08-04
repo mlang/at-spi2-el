@@ -61,6 +61,10 @@
 (defconst atspi-registry-service "org.freedesktop.atspi.Registry"
   "The ATSPI DBus Registry service name.")
 
+(defun atspi-available-p ()
+  "Return non-nil when AT-SPI is available (the registry daemon is running)."
+  (member atspi-registry-service (dbus-list-names :session)))
+
 (defconst atspi-registry-path "/org/freedesktop/atspi/registry"
   "The DBus path of the ATSPI registry.")
 
