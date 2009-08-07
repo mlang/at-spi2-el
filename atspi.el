@@ -63,19 +63,6 @@
 (defconst atspi-prefix "org.freedesktop.atspi."
   "Common prefix for AT-SPI service and interface names.")
 
-(defconst atspi-service-registry (concat atspi-prefix "Registry")
-  "The AT-SPI Registry D-Bus service name.")
-
-(defun atspi-available-p ()
-  "Return non-nil if AT-SPI is available (the registry daemon is running)."
-  (member atspi-service-registry (dbus-list-names :session)))
-
-(defconst atspi-path-registry "/org/freedesktop/atspi/registry"
-  "The D-Bus path of the AT-SPI registry.")
-
-(defconst atspi-interface-registry (concat atspi-prefix "Registry")
-  "The AT-SPI Registry D-Bus interface name.")
-
 (defconst atspi-interface-accessible (concat atspi-prefix "Accessible")
   "The AT-SPI Accessible D-Bus interface name.")
 
@@ -92,8 +79,21 @@
 
 ;;;; Assistive technologies registry
 
+(defconst atspi-service-registry (concat atspi-prefix "Registry")
+  "The AT-SPI Registry D-Bus service name.")
+
+(defun atspi-available-p ()
+  "Return non-nil if AT-SPI is available (the registry daemon is running)."
+  (member atspi-service-registry (dbus-list-names :session)))
+
+(defconst atspi-path-registry "/org/freedesktop/atspi/registry"
+  "The D-Bus path of the AT-SPI registry.")
+
+(defconst atspi-interface-registry atspi-service-registry
+  "The AT-SPI Registry D-Bus interface name.")
+
 (defun atspi-call-registry-method (method &rest args)
-  "Call METHOD of the assistive technologies registry."
+  "Call METHOD of the at-spi registry."
   (check-type method string)
   (apply #'dbus-call-method :session atspi-service-registry
 	 atspi-path-registry atspi-interface-registry method args))
@@ -126,7 +126,7 @@ registry."
    ((= what 1)
     (run-hook-with-args 'atspi-application-removed-hook service))))
 
-(defun atspi-registry-install-update-applications-handler ()
+(defun atspi-registry-register-update-applications-handler ()
   "Register `atspi-registry-update-applications-handler' with D-Bus."
   (setq atspi-registry-update-applications-signal-handler
         (dbus-register-signal
@@ -453,6 +453,24 @@ other accessible objects."
 	   (list (atspi-tree-entry-to-widget service
 					     (car (atspi-get-tree service))))))
 	(atspi-registry-get-applications)))
+
+;;;; Initialisation
+
+(defcustom atspi-client-initialisation-hook
+  '(atspi-registry-register-update-applications-handler
+    atspi-event-register-focus-handler)
+  "List of functions to call upon at-spi client initialisation."
+  :type 'hook
+  :options '(atspi-registry-register-update-applications-handler
+	     atspi-event-register-focus-handler))
+
+(defun atspi-client-initialize ()
+  "Initialize signal handlers."
+  (interactive)
+  (if (not (atspi-available-p))
+      (error "AT-SPI is not available.")
+    (run-hook 'atspi-client-initialisation-hook)
+    t))
 
 (provide 'atspi)
 ;;; atspi.el ends here
