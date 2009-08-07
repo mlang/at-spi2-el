@@ -103,17 +103,17 @@ Returns a list of service names."
 (defvar atspi-registry-update-applications-signal-handler nil
   "If non-nil the signal handler information from `dbus-register-signal'.")
 
-(defun atspi-registry-update-applicatiopns-handler (what service)
+(defun atspi-registry-update-applications-handler (what service)
   "Informs us WHAT has changed about SERVICE."
   (message "Device %s was %S" service what))
 
 (defun atspi-registry-install-update-applications-handler ()
-  "Register `atspi-registry-update-applicatiopns-handler' with D-Bus."
+  "Register `atspi-registry-update-applications-handler' with D-Bus."
   (setq atspi-registry-update-applications-signal-handler
         (dbus-register-signal
          :session atspi-service-registry atspi-path-registry
 	 atspi-interface-registry "updateApplications"
-	 #'atspi-update-applicatiopns-handler)))
+	 #'atspi-registry-update-applications-handler)))
 
 (defvar atspi-event-focus-signal-handler nil
   "If non-nil the object returned from `dbus-register-signal'.")
@@ -237,7 +237,7 @@ path)."
 				    "-p")) (tree-entry)
 	     (when (member (concat "org.freedesktop.atspi."
 				   ,(symbol-name interface))
-			   (atspi-tree-entry-get-interfaces tree-entry))
+			   (atspi-tree-entry-get-interface-names tree-entry))
 	       t))))
 	'(Action Application Component EditableText Text))
 
