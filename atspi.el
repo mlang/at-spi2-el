@@ -126,8 +126,25 @@ registry."
    ((= what 1)
     (run-hook-with-args 'atspi-application-removed-hook service))))
 
+(defmacro atspi-unregister-signal (handler)
+  "Uninstall HANDLER (a variable name)."
+  `(let ((object ,handler))
+     (if object
+	 (if (dbus-unregister-object object)
+	     (setq ,handler nil)
+	   (display-warning
+	    'atspi ,(format "Failed to unregister `%s'" handler)
+	    :error))
+       (display-warning
+	'atspi ,(format "`%s' was not registered with D-Bus" handler)
+	:warning))))
+
+(defun atspi-registry-unregister-update-applications-handler ()
+  (atspi-unregister-signal atspi-registry-update-applications-signal-handler))
+
 (defun atspi-registry-register-update-applications-handler ()
   "Register `atspi-registry-update-applications-handler' with D-Bus."
+  (atspi-registry-unregister-update-applications-handler)
   (setq atspi-registry-update-applications-signal-handler
         (dbus-register-signal
          :session atspi-service-registry atspi-path-registry
@@ -153,12 +170,7 @@ path)."
 
 (defun atspi-event-unregister-focus-handler ()
   "Uninstall `atspi-event-focus-handler'."
-  (when atspi-event-focus-signal-handler
-    (if (dbus-unregister-object atspi-event-focus-signal-handler)
-	(setq atspi-event-focus-signal-handler nil)
-      (display-warning
-       'atspi "Failed to unregister `atspi-event-focus-signal-handler'"
-       :error))))
+  (atspi-unregister-signal atspi-event-focus-signal-handler))
 
 (defun atspi-event-register-focus-handler ()
   "Install `atspi-event-focus-handler'."
@@ -454,7 +466,7 @@ other accessible objects."
 					     (car (atspi-get-tree service))))))
 	(atspi-registry-get-applications)))
 
-;;;; Initialisation
+;;;; Client Initialisation
 
 (defcustom atspi-client-initialisation-hook
   '(atspi-registry-register-update-applications-handler
