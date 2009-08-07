@@ -119,7 +119,41 @@ registry."
 registry."
   :type 'hook)
 
-(defun atspi-registry-update-applications-handler (what service)
+(defmacro atspi-define-signal (type name service path signal args &rest body)
+  (let* ((prefix (concat "atspi-" (symbol-name type) "-"))
+	 (name (symbol-name name))
+	 (handler-object (intern (concat prefix name "-signal-object")))
+	 (interface (intern (concat "atspi-interface-" (symbol-name type))))
+	 (handler-function (intern (concat prefix name "-handler")))
+	 (register-function (intern (concat prefix "register-" name
+					    "-handler")))
+	 (unregister-function (intern (concat prefix "unregister-" name
+					      "-handler"))))
+    `(progn
+       (defvar ,handler-object nil
+	 ,(format "If non-nil the signal handler object returned from `%s'."
+		  'dbus-register-signal))
+       (defun ,unregister-function ()
+	 ,(format "Unregister `%s' from D-Bus." handler-function)
+	 (when ,handler-object
+	   (if (dbus-unregister-object ,handler-object)
+	       (setq ,handler-object nil)
+	     (display-warning
+	      'atspi ,(format "Failed to unregister `%s'" handler-object)
+	      :error))))
+       (defun ,handler-function ,args
+	 ,@body)
+       (defun ,register-function ()
+	 ,(format "Register `%s' with D-Bus." handler-function)
+	 (,unregister-function)
+	 (setq ,handler-object
+	       (dbus-register-signal
+		:session ,service ,path
+		,interface ,signal #',handler-function))))))
+
+(atspi-define-signal registry update-applications
+  atspi-service-registry atspi-path-registry
+  "updateApplications" (what service)
   "Informs us WHAT has changed about SERVICE."
   (cond
    ((= what 0)
@@ -127,60 +161,19 @@ registry."
    ((= what 1)
     (run-hook-with-args 'atspi-application-removed-hook service))))
 
-(defmacro atspi-unregister-signal (handler)
-  "Uninstall HANDLER (a variable name)."
-  `(let ((object ,handler))
-     (if object
-	 (if (dbus-unregister-object object)
-	     (setq ,handler nil)
-	   (display-warning
-	    'atspi ,(format "Failed to unregister `%s'" handler)
-	    :error))
-       (display-warning
-	'atspi ,(format "`%s' was not registered with D-Bus" handler)
-	:warning))))
-
-(defun atspi-registry-unregister-update-applications-handler ()
-  (atspi-unregister-signal atspi-registry-update-applications-signal-handler))
-
-(defun atspi-registry-register-update-applications-handler ()
-  "Register `atspi-registry-update-applications-handler' with D-Bus."
-  (atspi-registry-unregister-update-applications-handler)
-  (setq atspi-registry-update-applications-signal-handler
-        (dbus-register-signal
-         :session atspi-service-registry atspi-path-registry
-	 atspi-interface-registry "updateApplications"
-	 #'atspi-registry-update-applications-handler)))
-
-;;;; Focus tracking
-
-(defvar atspi-event-focus-signal-handler nil
-  "If non-nil the object returned from `dbus-register-signal'.")
-
 (defcustom atspi-focus-changed-hook nil
   "A list of functions to execute when the focus has changed.
 Arguments passed are SERVICE (the D-Bus service) and PATH (the object D-Bus
 path)."
   :type 'hook)
 
-(defun atspi-event-focus-handler (&rest ignore)
-  "Call `atspi-focus-changed-hook' when a AT-SPI focus signal is received."
+(atspi-define-signal event focus
+  nil nil "org.freedesktop.atspi.Event.Focus"
+  "focus" (&rest ignore)
+  "Call `atspi-focus-changed-hook' when a focus signal is received."
   (run-hook-with-args
    'atspi-focus-changed-hook
    (dbus-event-service-name event) (dbus-event-path-name event)))
-
-(defun atspi-event-unregister-focus-handler ()
-  "Uninstall `atspi-event-focus-handler'."
-  (atspi-unregister-signal atspi-event-focus-signal-handler))
-
-(defun atspi-event-register-focus-handler ()
-  "Install `atspi-event-focus-handler'."
-  (atspi-event-unregister-focus-handler)
-  (setq atspi-event-focus-signal-handler
-	(dbus-register-signal
-	 :session nil nil
-	 "org.freedesktop.atspi.Event.Focus" "focus"
-	 #'atspi-event-focus-handler)))
 
 (defun atspi-tree-remove-accessible-handler (path)
   (let ((service (dbus-event-service-name event)))
