@@ -22,7 +22,6 @@
 
 ;; 
 
-
 ;;; History:
 ;; 
 
@@ -30,6 +29,8 @@
 
 (require 'cl)
 (require 'dbus)
+
+;;;; Constants
 
 (defconst atspi-role-keywords
   '(:invalid :accelerator-label :alter :animation :arrow :calendar :canvas
@@ -60,29 +61,29 @@
   "List of object states.")
 
 (defconst atspi-prefix "org.freedesktop.atspi."
-  "Common prefix for AT-SPI services and interfaces.")
+  "Common prefix for AT-SPI service and interface names.")
 
 (defconst atspi-service-registry (concat atspi-prefix "Registry")
-  "The ATSPI DBus Registry service name.")
+  "The AT-SPI Registry DBus service name.")
 
 (defun atspi-available-p ()
-  "Return non-nil when AT-SPI is available (the registry daemon is running)."
+  "Return non-nil if AT-SPI is available (the registry daemon is running)."
   (member atspi-service-registry (dbus-list-names :session)))
 
 (defconst atspi-path-registry "/org/freedesktop/atspi/registry"
-  "The DBus path of the ATSPI registry.")
+  "The D-Bus path of the AT-SPI registry.")
 
 (defconst atspi-interface-registry (concat atspi-prefix "Registry")
-  "The ATSPI DBus Registry interface name.")
+  "The AT-SPI Registry D-Bus interface name.")
 
 (defconst atspi-interface-accessible (concat atspi-prefix "Accessible")
-  "The ATSPI DBus Accessible interface name.")
+  "The AT-SPI Accessible D-Bus interface name.")
 
 (defconst atspi-interface-action (concat atspi-prefix "Action")
-  "The ATSPI DBus Action interface name.")
+  "The AT-SPI Action D-Bus interface name.")
 
 (defconst atspi-interface-text (concat atspi-prefix "Text")
-  "The ATSPI DBus Text interface name.")
+  "The ATSPI D-Bus Text interface name.")
 
 (defun atspi-decode-role (value)
   "Convert VALUE (a integer) to an AT-SPI object role (a symbol)."
@@ -100,12 +101,28 @@
 Returns a list of service names."
   (atspi-call-registry-method "getApplications"))
 
+;;;; Signal handler for updateApplications
+
 (defvar atspi-registry-update-applications-signal-handler nil
   "If non-nil the signal handler information from `dbus-register-signal'.")
 
+(defcustom atspi-application-added-hook nil
+  "List of functions to execute when new applications are registered with the
+registry."
+  :type 'hook)
+
+(defcustom atspi-application-removed-hook nil
+  "List of functions to execute when an applications is removed from the
+registry."
+  :type 'hook)
+
 (defun atspi-registry-update-applications-handler (what service)
   "Informs us WHAT has changed about SERVICE."
-  (message "Device %s was %S" service what))
+  (cond
+   ((= what 0)
+    (run-hook-with-args 'atspi-application-added-hook service))
+   ((= what 1)
+    (run-hook-with-args 'atspi-application-removed-hook service))))
 
 (defun atspi-registry-install-update-applications-handler ()
   "Register `atspi-registry-update-applications-handler' with D-Bus."
@@ -114,6 +131,8 @@ Returns a list of service names."
          :session atspi-service-registry atspi-path-registry
 	 atspi-interface-registry "updateApplications"
 	 #'atspi-registry-update-applications-handler)))
+
+;;;; Focus tracking
 
 (defvar atspi-event-focus-signal-handler nil
   "If non-nil the object returned from `dbus-register-signal'.")
@@ -160,7 +179,7 @@ path)."
 	 "org.freedesktop.atspi.Tree" "removeAccessible"
 	 'atspi-tree-remove-accessible-handler)))
 
-;;; Tree of accessible objects
+;;;; Tree of accessible objects
 
 (defun atspi-call-tree-method (service method &rest args)
   "Call Tree interface METHOD of SERVICE."
@@ -179,15 +198,15 @@ path)."
 	:test #'string= :key #'atspi-tree-entry-get-path))
 
 (defun atspi-tree-entry-get-path (tree-entry)
-  "Return the DBus path of the accessible object described by TREE-ENTRY."
+  "Return the D-Bus path of the accessible object described by TREE-ENTRY."
   (nth 0 tree-entry))
 
 (defun atspi-tree-entry-get-parent (tree-entry)
-  "Return the DBus path of the parent of the object described by TREE-ENTRY."
+  "Return the D-Bus path of the parent of the object described by TREE-ENTRY."
   (nth 1 tree-entry))
 
 (defun atspi-tree-entry-get-children (tree-entry)
-  "Return a list of DBus paths of the children of this TREE-ENTRY."
+  "Return a list of D-Bus paths of the children of this TREE-ENTRY."
   (nth 2 tree-entry))
 
 (defun atspi-tree-entry-get-interface-names (tree-entry)
@@ -316,7 +335,7 @@ other accessible objects."
     (atspi-call-action-method service path "doAction" :int32 index)))
 
 
-;;; Application Cache
+;;;; Application Cache
 
 (defvar atspi-applications nil
   "An alist.")
@@ -373,7 +392,7 @@ other accessible objects."
     (process-send-string proc (concat string "\n"))
     (process-send-eof proc)))
 
-;;; Tree view
+;;;; Tree view
 
 (require 'tree-widget)
 
