@@ -101,7 +101,7 @@
 (defun atspi-registry-get-applications ()
   "Gets all the currently registered applications.
 Returns a list of D-Bus service names."
-  (atspi-call-registry-method "getApplications"))
+  (dbus-ignore-errors (atspi-call-registry-method "getApplications")))
 
 ;;;;; Signal handler for updateApplications
 
@@ -380,17 +380,19 @@ other accessible objects."
   (find path tree :key #'car :test #'string=))
 
 (defun atspi-define-action-commands (service)
-  (let* ((tree (atspi-get-tree service))
-	 (action-objects (remove-if-not #'atspi-tree-entry-Action-p tree)))
-    (while action-objects
-      (let ((action-object (car action-objects)))
-	(when (> (length (atspi-tree-entry-get-name action-object)) 0)
-	  (let ((path (list (atspi-tree-entry-get-name action-object)))
+  (interactive (list (completing-read "Service: "
+				      (atspi-registry-get-applications))))
+  (let ((tree (atspi-get-tree service)))
+    (dolist (action-object (remove-if-not #'atspi-tree-entry-Action-p tree))
+      (let ((accessible-name (atspi-tree-entry-get-name action-object)))
+	(when (> (length accessible-name) 0)
+	  (let ((path (list accessible-name))
 		(current-object action-object))
 	    (while current-object
 	      (setq current-object (atspi-tree-find-entry
 				    tree
-				    (atspi-tree-entry-get-parent current-object)))
+				    (atspi-tree-entry-get-parent
+				     current-object)))
 	      (when (and current-object
 			 (> (length (atspi-tree-entry-get-name current-object)) 0))
 		(setq path (cons (atspi-tree-entry-get-name current-object)
@@ -407,8 +409,7 @@ other accessible objects."
 			 (index (position action actions
 					  :key 'car :test #'string=)))
 		    (atspi-call-action-method ,service ,object-path "doAction"
-					      :int32 index))))))))
-      (setq action-objects (cdr action-objects)))))
+					      :int32 index)))))))))))
 
 (defun atspi-focus-changed-function (service path)
   (let ((tree-entry (atspi-tree-get-entry service path)))
