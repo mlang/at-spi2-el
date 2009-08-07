@@ -119,37 +119,39 @@ registry."
 registry."
   :type 'hook)
 
+(defconst atspi-signal-object-docstring-format "If non-nil the object returned
+from `%s' when `%s' was registered with D-Bus.")
+
 (defmacro atspi-define-signal (type name service path signal args &rest body)
   (let* ((prefix (concat "atspi-" (symbol-name type) "-"))
 	 (name (symbol-name name))
-	 (handler-object (intern (concat prefix name "-signal-object")))
+	 (object (intern (concat prefix name "-signal-object")))
 	 (interface (intern (concat "atspi-interface-" (symbol-name type))))
-	 (handler-function (intern (concat prefix name "-handler")))
-	 (register-function (intern (concat prefix "register-" name
-					    "-handler")))
-	 (unregister-function (intern (concat prefix "unregister-" name
-					      "-handler"))))
+	 (handler (intern (concat prefix name "-handler")))
+	 (register (intern (concat prefix "register-" name "-handler")))
+	 (unregister (intern (concat prefix "unregister-" name "-handler"))))
     `(progn
-       (defvar ,handler-object nil
-	 ,(format "If non-nil the signal handler object returned from `%s'."
-		  'dbus-register-signal))
-       (defun ,unregister-function ()
-	 ,(format "Unregister `%s' from D-Bus." handler-function)
-	 (when ,handler-object
-	   (if (dbus-unregister-object ,handler-object)
-	       (setq ,handler-object nil)
+       (defvar ,object nil
+	 ,(let ((fill-column 76))
+	    (with-temp-buffer
+	      (insert (format atspi-signal-object-docstring-format
+			      'dbus-register-signal handler))
+	      (fill-region (point-min) (point-max)) (buffer-string))))
+       (defun ,unregister ()
+	 ,(format "Unregister `%s' from D-Bus." handler)
+	 (when ,object
+	   (if (dbus-unregister-object ,object)
+	       (setq ,object nil)
 	     (display-warning
-	      'atspi ,(format "Failed to unregister `%s'" handler-object)
-	      :error))))
-       (defun ,handler-function ,args
+	      'atspi ,(format "Failed to unregister `%s'" object) :error))))
+       (defun ,handler ,args
 	 ,@body)
-       (defun ,register-function ()
-	 ,(format "Register `%s' with D-Bus." handler-function)
-	 (,unregister-function)
-	 (setq ,handler-object
+       (defun ,register ()
+	 ,(format "Register `%s' with D-Bus." handler)
+	 (,unregister)
+	 (setq ,object
 	       (dbus-register-signal
-		:session ,service ,path
-		,interface ,signal #',handler-function))))))
+		:session ,service ,path ,interface ,signal #',handler))))))
 
 (atspi-define-signal registry update-applications
   atspi-service-registry atspi-path-registry
