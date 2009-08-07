@@ -108,10 +108,11 @@ Returns a list of D-Bus service names."
 (defvar atspi-registry-update-applications-signal-handler nil
   "If non-nil the signal handler information from `dbus-register-signal'.")
 
-(defcustom atspi-application-added-hook nil
+(defcustom atspi-application-added-hook '(atspi-define-action-commands)
   "List of functions to call when new applications were registered with the
 registry."
-  :type 'hook)
+  :type 'hook
+  :options '(atspi-define-action-commands))
 
 (defcustom atspi-application-removed-hook nil
   "List of functions to call when an application is removed from the
@@ -482,7 +483,7 @@ other accessible objects."
   (interactive)
   (if (not (atspi-available-p))
       (error "AT-SPI is not available.")
-    (run-hook 'atspi-client-initialisation-hook)
+    (run-hooks 'atspi-client-initialisation-hook)
     t))
 
 (provide 'atspi)
