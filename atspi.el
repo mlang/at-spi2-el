@@ -373,5 +373,51 @@ other accessible objects."
     (process-send-string proc (concat string "\n"))
     (process-send-eof proc)))
 
+;;; Tree view
+
+(require 'tree-widget)
+
+(define-widget 'atspi-service 'tree-widget
+  "AT-SPI widget to represent toplevel services."
+  :tag "Service")
+
+(defun atspi-tree-entry-to-widget (service tree-entry)
+  (let ((children (atspi-tree-entry-get-children tree-entry))
+	(name (atspi-tree-entry-get-name tree-entry))
+	(path (atspi-tree-entry-get-path tree-entry)))
+    (list 'tree-widget
+	  :tag name
+	  :service service
+	  :path path
+	  :has-children (> (length children) 0)
+	  :dynargs (lambda (widget)
+		     (let ((service (widget-get widget :service))
+			   (path (widget-get widget :path)))
+		       (mapcar (lambda (path)
+				 (let ((entry (atspi-tree-get-entry service
+								    path)))
+				   (atspi-tree-entry-to-widget service entry)))
+			       (atspi-tree-entry-get-children
+				(atspi-tree-get-entry service path))))))))
+
+(defun atspi-browser ()
+  "Draw a tree of all accessible objects."
+  (interactive)
+  (switch-to-buffer "*AT-SPI Browser*")
+  (kill-all-local-variables)
+    (let ((inhibit-read-only t))
+    (erase-buffer))
+  ;(let ((all (tree-widget-sample-overlay-lists)))
+  ;  (mapcar #'tree-widget-sample-delete-overlay (car all))
+  ;  (mapcar #'tree-widget-sample-delete-overlay (cdr all)))
+
+  (widget-insert (format "%s\n\n" (buffer-name)))
+  (mapc (lambda (service)
+	  (apply #'widget-create
+	   'atspi-service :tag service
+	   (list (atspi-tree-entry-to-widget service
+					     (car (atspi-get-tree service))))))
+	(atspi-registry-get-applications)))
+
 (provide 'atspi)
 ;;; atspi.el ends here
