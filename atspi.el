@@ -394,8 +394,8 @@ to other accessible objects."
   (do-action (action)
     "Invoke ACTION (a string or integer index) of Action object SERVICE PATH."
     (interactive
-     (destructuring-bind (service path) (atspi-read-service-and-path
-					 #'atspi-tree-entry-Action-p)
+     (destructuring-bind (service path)
+	 (atspi-read-service-and-path #'atspi-tree-entry-Action-p)
        (list service path
 	     (completing-read "Action to invoke: "
 			      (atspi-action-get-actions service path) nil t))))
@@ -438,13 +438,23 @@ to other accessible objects."
   (check-type service string)
   (check-type path string)
   (unless do-action (setq do-action "click"))
-  (let* ((actions (atspi-action-get-actions service path))
-	 (index (position do-action actions :key 'car :test #'string=)))
-    (atspi-call-action-method service path "doAction" :int32 index)))
-
+  (atspi-action-do-action service path do-action)))
 
 (defun atspi-tree-find-entry (tree path)
   (find path tree :key #'car :test #'string=))
+
+(defun atspi-tree-entry-get-all-parents (tree-entry tree)
+  (let ((path ()))
+    (while tree-entry
+      (setq path (cons tree-entry path)
+	    tree-entry (atspi-tree-find-entry
+			tree (atspi-tree-entry-get-parent tree-entry))))
+    path))
+
+(defun atspi-tree-entry-named-path (tree-entry tree)
+  (remove-if-not (lambda (entry)
+		   (> (length (atspi-tree-entry-get-name entry)) 0))
+		 (atspi-tree-entry-get-all-parents tree-entry tree)))
 
 (defun atspi-define-action-commands (service)
   (interactive (list (completing-read "Service: "
@@ -453,30 +463,17 @@ to other accessible objects."
     (dolist (action-object (remove-if-not #'atspi-tree-entry-Action-p tree))
       (let ((accessible-name (atspi-tree-entry-get-name action-object)))
 	(when (> (length accessible-name) 0)
-	  (let ((path (list accessible-name))
-		(current-object action-object))
-	    (while current-object
-	      (setq current-object (atspi-tree-find-entry
-				    tree
-				    (atspi-tree-entry-get-parent
-				     current-object)))
-	      (when (and current-object
-			 (> (length (atspi-tree-entry-get-name current-object)) 0))
-		(setq path (cons (atspi-tree-entry-get-name current-object)
-				 path))))
-	    (let ((object-path (atspi-tree-entry-get-path action-object)))
-	      (eval
-	       `(defun ,(intern (mapconcat #'identity path " / ")) (action)
-		  (interactive
-		   (list (completing-read "Action to perform: "
-					  (atspi-action-get-actions
-					   ,service ,object-path))))
-		  (let* ((actions (atspi-action-get-actions
-				   ,service ,object-path))
-			 (index (position action actions
-					  :key 'car :test #'string=)))
-		    (atspi-call-action-method ,service ,object-path "doAction"
-					      :int32 index)))))))))))
+	  (let ((object-path (atspi-tree-entry-get-path action-object)))
+	    (eval
+	     `(defun ,(intern (mapconcat #'atspi-tree-entry-get-name
+					 (atspi-tree-entry-named-path
+					  action-object tree)
+					 " / ")) (action)
+		 (interactive
+		  (list (completing-read "Action to perform: "
+					 (atspi-action-get-actions
+					  ,service ,object-path))))
+		 (atspi-action-do-action ,service ,object-path action)))))))))
 
 (defun atspi-focus-changed-echo-function (service path)
   (let ((tree-entry (atspi-tree-get-entry service path)))
