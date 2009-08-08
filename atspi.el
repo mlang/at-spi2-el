@@ -410,8 +410,37 @@ to other accessible objects."
     "Get the Role indicating the type of ui role played by PATH of SERVICE."
     (atspi-decode-role (call-method "getRole")))
   (get-role-name ()
-    (call-method "getRoleName")))
+    (call-method "getRoleName"))
+  (get-application ()
+    "Get the containing Application object path for this object."
+    (call-method "getApplication")))
   
+(atspi-define-accessible-interface application "Application")
+
+(defun atspi-toolkit-name (service &optional path)
+  "A string indicating the type of user interface toolkit which is used by
+the application.
+Ordinarily clients should be toolkit-agnostic, dependencies on this property
+should be avoided where possible."
+  (check-type service string)
+  (unless path (setq path "/org/freedesktop/atspi/accessible"))
+  (check-type path string)
+  (unless (atspi-interface-implemented-p
+	   service path atspi-interface-application)
+    (setq path (atspi-accessible-get-application service path)))
+  (atspi-get-property service path atspi-interface-application "toolkitName"))
+
+(defun atspi-toolkit-version (service &optional path)
+  "A string indicating the version number of the application's accessibility
+bridge implementation."
+  (check-type service string)
+  (unless path (setq path "/org/freedesktop/atspi/accessible"))
+  (check-type path string)
+  (unless (atspi-interface-implemented-p
+	   service path atspi-interface-application)
+    (setq path (atspi-accessible-get-application service path)))
+  (atspi-get-property service path atspi-interface-application "version"))
+
 (atspi-define-accessible-interface action "Action"
   (get-actions ()
     (atspi-call-action-method service path "getActions"))
@@ -432,6 +461,35 @@ to other accessible objects."
     (check-type action integer)
     (atspi-call-action-method service path "doAction" :int32 action)))
 
+(defun atspi-interface-implemented-p (service path interface)
+  (member interface (atspi-list-accessible-interface-names service path)))
+
+(defun atspi-action-n-actions (service path)
+  (unless (atspi-interface-implemented-p service path atspi-interface-action)
+    (error "%s%s does not implement %s" service path atspi-interface-action))
+  (atspi-get-property service path atspi-interface-action "nActions"))
+
+(defconst atspi-coord-type-keywords '(:screen :window))
+
+(defun atspi-decode-coord-type (value)
+  (check-type value integer)
+  (nth value atspi-coord-type-keywords))
+
+(defun atspi-encode-coord-type (keyword)
+  (position keyword atspi-coord-type-keywords))
+
+(atspi-define-accessible-interface component "Component"
+  (get-extents (&optional relative-to)
+    (unless relative-to (setq relative-to :screen))
+    (unless (integerp relative-to)
+      (setq relative-to (atspi-encode-coord-type relative-to)))
+    (call-method "getExtents" :uint32 relative-to))
+  (grab-focus ()
+    "Request that the object obtain keyboard focus.
+Return t if keyboard focus was successfully transferred to the Component,
+nil otherwise."
+    (= (call-method "grabFocus") 0)))
+
 (atspi-define-accessible-interface text "Text"
   (get-text (&optional start end)
     "Obtain all or part of the textual content of a Text object."
@@ -443,16 +501,15 @@ to other accessible objects."
     (call-method "setCaretOffset" :int32 position)))
 
 (defun atspi-get-property (service path interface property)
-  (dbus-call-method
-   :session service path dbus-interface-properties "Get" interface property))
+  (car
+   (dbus-call-method
+    :session service path dbus-interface-properties "Get" interface property)))
 
 (defun atspi-text-get-character-count (service path)
-  (car-safe
-   (atspi-get-property service path atspi-interface-text "characterCount")))
+  (atspi-get-property service path atspi-interface-text "characterCount"))
 
 (defun atspi-text-get-caret-offset (service path)
-  (car-safe
-   (atspi-get-property service path atspi-interface-text "caretOffset")))
+  (atspi-get-property service path atspi-interface-text "caretOffset"))
 
 (atspi-define-accessible-interface editable-text "EditableText"
   (set-text-contents (string)
