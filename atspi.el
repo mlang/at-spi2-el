@@ -32,55 +32,14 @@
 
 ;;;; Constants
 
-(defconst atspi-role-keywords
-  '(:invalid :accelerator-label :alter :animation :arrow :calendar :canvas
-    :check-box :check-menu-item :color-chooser :column-header :combo-box
-    :date-editor :desktop-icon :desktop-frame :dial :dialog :directory-pane
-    :drawing-area :file-chooser :filler :focus-traversable :font-chooser
-    :frame :glass-pane :html-container :icon :image :internal-frame :label
-    :layered-pane :list :list-item :menu :menu-bar :menu-item :option-pane
-    :page-tab :page-tab-list :panel :password-text :popup-menu :progress-bar
-    :push-button :radio-button :radio-menu-item :root-pane :row-header
-    :scroll-bar :scroll-pane :separator :slider :spin-button :split-pane
-    :status-bar :table :table-cell :table-column-header :table-row-header
-    :tearoff-menu-item :terminal :text :toggle-button :tool-bar :tool-tip :tree
-    :tree-table :unknown :viewport :window :extended :header :footer :paragraph
-    :ruler :application :autocomplete :editbar :embedded :entry :chart
-    :caption :document-frame :heading :page :section :redundant-object :form
-    :link :input-method-window)
-  "List of object roles.")
-
-(defconst atspi-state-keywords
-  '(:invalid :active :armed :busy :checked :collapsed :defunct :editable
-    :enabled :expandable :expanded :focusable :focused :has-tooltip
-    :horizontal :iconified :modal :multi-line :multiselectable :opaque
-    :pressed :resizable :selectable :selected :sensitive :showing :single-line
-    :stale :transient :vertical :visible :manages-descendants :indeterminate
-    :required :truncated :animated :invalid-entry :supports-autocompletion
-    :selectable-text :is-default :visited)
-  "List of object states.")
-
 (defconst atspi-prefix "org.freedesktop.atspi."
   "Common prefix for AT-SPI service and interface names.")
-
-(defconst atspi-interface-accessible (concat atspi-prefix "Accessible")
-  "The AT-SPI Accessible D-Bus interface name.")
-
-(defconst atspi-interface-action (concat atspi-prefix "Action")
-  "The AT-SPI Action D-Bus interface name.")
-
-(defconst atspi-interface-text (concat atspi-prefix "Text")
-  "The AT-SPI D-Bus Text interface name.")
-
-(defun atspi-decode-role (value)
-  "Convert VALUE (a integer) to an AT-SPI object role (a symbol)."
-  (check-type value integer)
-  (nth value atspi-role-keywords))
 
 ;;;; Assistive technologies registry
 
 (defconst atspi-service-registry (concat atspi-prefix "Registry")
-  "The AT-SPI Registry D-Bus service name.")
+  "The AT-SPI Registry D-Bus service name.
+For invocation of methods on this interface see `atspi-call-registry-method'.")
 
 (defun atspi-available-p ()
   "Return non-nil if AT-SPI is available (the registry daemon is running)."
@@ -93,7 +52,7 @@
   "The AT-SPI Registry D-Bus interface name.")
 
 (defun atspi-call-registry-method (method &rest args)
-  "Call METHOD of the at-spi registry."
+  "Call `atspi-interface-registry' METHOD with ARGS."
   (check-type method string)
   (apply #'dbus-call-method :session atspi-service-registry
 	 atspi-path-registry atspi-interface-registry method args))
@@ -105,24 +64,32 @@ Returns a list of D-Bus service names."
 
 ;;;;; Signal handler for updateApplications
 
-(defvar atspi-registry-update-applications-signal-handler nil
-  "If non-nil the signal handler information from `dbus-register-signal'.")
-
 (defcustom atspi-application-added-hook '(atspi-define-action-commands)
-  "List of functions to call when new applications were registered with the
-registry."
+  "List of functions to call when a new application was added to the registry.
+The D-Bus service name of the newly added application is passed as an argument.
+For this hook to fire `atspi-registry-register-update-applications-handler'
+needs to be called at some point, possibly from
+`atspi-client-initialisation-hook' which is run by `atspi-client-initialize'."
   :type 'hook
   :options '(atspi-define-action-commands))
 
 (defcustom atspi-application-removed-hook nil
-  "List of functions to call when an application is removed from the
-registry."
+  "List of functions to call when an application is removed from the registry.
+For this hook to fire `atspi-registry-register-update-applications-handler'
+needs to be called at some point, possibly from
+`atspi-client-initialisation-hook' which is run by `atspi-client-initialize'."
   :type 'hook)
 
-(defconst atspi-signal-object-docstring-format "If non-nil the object returned
-from `%s' when `%s' was registered with D-Bus.")
+(defun atspi-fill-docstring (column string)
+  "Utility function to refill docstrings."
+  (with-temp-buffer
+    (let ((fill-column 76))
+      (insert string) (fill-region (point-min) (point-max)) (buffer-string))))
 
 (defmacro atspi-define-signal (type name service path signal args &rest body)
+  "Define `atspi-TYPE-NAME-handler' for D-Bus SIGNAL of `atspi-interface-TYPE'.
+Also define `atspi-TYPE-(un)register-NAME-handler' for handler activation
+management."
   (let* ((prefix (concat "atspi-" (symbol-name type) "-"))
 	 (name (symbol-name name))
 	 (object (intern (concat prefix name "-signal-object")))
@@ -132,11 +99,9 @@ from `%s' when `%s' was registered with D-Bus.")
 	 (unregister (intern (concat prefix "unregister-" name "-handler"))))
     `(progn
        (defvar ,object nil
-	 ,(let ((fill-column 76))
-	    (with-temp-buffer
-	      (insert (format atspi-signal-object-docstring-format
-			      'dbus-register-signal handler))
-	      (fill-region (point-min) (point-max)) (buffer-string))))
+	 ,(atspi-fill-docstring
+	   76 (format "If non-nil the object returned from `%s' when `%s' was
+registered with D-Bus." 'dbus-register-signal handler)))
        (defun ,unregister ()
 	 ,(format "Unregister `%s' from D-Bus." handler)
 	 (when ,object
@@ -144,10 +109,11 @@ from `%s' when `%s' was registered with D-Bus.")
 	       (setq ,object nil)
 	     (display-warning
 	      'atspi ,(format "Failed to unregister `%s'" object) :error))))
-       (defun ,handler ,args
-	 ,@body)
+       (defun ,handler ,args ,@body)
        (defun ,register ()
-	 ,(format "Register `%s' with D-Bus." handler)
+	 ,(atspi-fill-docstring
+	   76 (format "Register `%s' for signal \"%s\" of `%s'."
+		      handler signal interface))
 	 (,unregister)
 	 (setq ,object
 	       (dbus-register-signal
@@ -164,13 +130,22 @@ from `%s' when `%s' was registered with D-Bus.")
     (run-hook-with-args 'atspi-application-removed-hook service))))
 
 (defcustom atspi-focus-changed-hook nil
-  "A list of functions to execute when the focus has changed.
-Arguments passed are SERVICE (the D-Bus service) and PATH (the object D-Bus
-path)."
-  :type 'hook)
+  "List of functions to call when focus has changed.
+Arguments passed are SERVICE and PATH of the accessible object that just
+received focus.
+For this hook to fire `atspi-event-focus-register-focus-handler' needs to be
+called at some point, possibly from `atspi-client-initialisation-hook'
+which is run by `atspi-client-initialize'."
+  :type 'hook
+  :options '(atspi-focus-changed-echo-function)
+  :link '(function-link atspi-client-initialize)
+  :link '(variable-link atspi-client-initialisation-hook)
+  :link '(function-link atspi-event-register-focus-handler))
 
-(atspi-define-signal event focus
-  nil nil "org.freedesktop.atspi.Event.Focus"
+(defconst atspi-interface-event-focus (concat atspi-prefix "Event.Focus"))
+
+(atspi-define-signal event-focus focus
+  nil nil
   "focus" (&rest ignore)
   "Call `atspi-focus-changed-hook' when a focus signal is received."
   (run-hook-with-args
@@ -187,30 +162,42 @@ path)."
         (dbus-register-signal
          :session nil "/org/freedesktop/atspi/tree"
 	 "org.freedesktop.atspi.Tree" "removeAccessible"
-	 'atspi-tree-remove-accessible-handler)))
+	 #'atspi-tree-remove-accessible-handler)))
 
 ;;;; Tree of accessible objects
 
 (defconst atspi-interface-tree (concat atspi-prefix "Tree")
-  "Tree of accessible objects D-Bus interface name.")
+  "Tree of accessible objects D-Bus interface name.
+For invocation see `atspi-call-tree-method'.")
 
 (defconst atspi-path-tree "/org/freedesktop/atspi/tree"
   "The D-Bus path to talk to `atspi-interface-tree'.")
 
 (defun atspi-call-tree-method (service method &rest args)
-  "Call `atspi-interface-tree' METHOD of SERVICE."
+  "On SERVICE call `atspi-interface-tree' METHOD with ARGS."
   (check-type service string)
   (check-type method string)
-  (apply #'dbus-call-method :session service
-	 atspi-path-tree atspi-interface-tree method args))
+  (apply #'dbus-call-method :session service atspi-path-tree
+	 atspi-interface-tree method args))
 
-(defun atspi-get-tree (service)
+(defun atspi-tree-get-tree (service)
   "Transfers information about all accessible objects of SERVICE."
   (atspi-call-tree-method service "getTree"))
 
-(defun atspi-tree-entry-get-path (tree-entry)
+(defsubst atspi-tree-entry-get-path (tree-entry)
   "Return the D-Bus path of the accessible object described by TREE-ENTRY."
   (nth 0 tree-entry))
+
+(defvar atspi-applications nil
+  "AT-SPI object cache.")
+
+(defun atspi-applications (&optional reload)
+  (if (and atspi-applications (not reload))
+      atspi-applications
+    (setq atspi-applications
+	  (mapcar (lambda (service)
+		    (cons service (atspi-tree-get-tree service)))
+		  (atspi-registry-get-applications)))))
 
 (defun atspi-tree-get-entry (service path)
   "Return the cache entry describing accessible of SERVICE located at PATH."
@@ -218,32 +205,92 @@ path)."
 		      (assoc service (atspi-applications t))))
 	:test #'string= :key #'atspi-tree-entry-get-path))
 
-(defun atspi-tree-entry-get-parent (tree-entry)
+(defsubst atspi-tree-entry-get-parent (tree-entry)
   "Return the D-Bus path of the parent of the object described by TREE-ENTRY."
   (nth 1 tree-entry))
 
-(defun atspi-tree-entry-get-children (tree-entry)
+(defun atspi-accessible-parent-path (service path)
+  (atspi-tree-entry-get-parent (atspi-tree-get-entry service path)))
+
+(defsubst atspi-tree-entry-get-children (tree-entry)
   "Return a list of D-Bus paths of the children of this TREE-ENTRY."
   (nth 2 tree-entry))
 
-(defun atspi-tree-entry-get-interface-names (tree-entry)
+(defun atspi-list-children-paths (service path)
+  (atspi-tree-entry-get-children (atspi-tree-get-entry service path)))
+
+(defun atspi-child-count (service path)
+  (length (atspi-list-children-paths service path)))
+
+(defsubst atspi-tree-entry-get-interface-names (tree-entry)
   "Return list of interfaces supported by the object described by TREE-ENTRY."
   (nth 3 tree-entry))
 
-(defun atspi-tree-entry-get-name (tree-entry)
+(defun atspi-list-accessible-interface-names (service path)
+  (atspi-tree-entry-get-interface-names (atspi-tree-get-entry service path)))
+
+(defsubst atspi-tree-entry-get-name (tree-entry)
   "Return the name (if any) of the accessible object described by TREE-ENTRY."
   (nth 4 tree-entry))
 
-(defun atspi-tree-entry-get-role (tree-entry)
+(defun atspi-accessible-name (service path)
+  (interactive
+   (let ((service (completing-read "Service: " (atspi-applications t) nil t)))
+     (list service
+	   (completing-read "Path: "
+			    (cdr (assoc service (atspi-applications)))
+			    nil t))))
+  (let ((name (atspi-tree-entry-get-name (atspi-tree-get-entry service path))))
+    (if (interactive-p)
+	(if (> (length name) 0)
+	    (message "Accessible name of %s%s is \"%s\"" service path name)
+	  (message "No accessible name defined for %s%s" service path))
+      name)))
+
+(defconst atspi-role-keywords
+  '(:invalid :accelerator-label :alter :animation :arrow :calendar :canvas
+    :check-box :check-menu-item :color-chooser :column-header :combo-box
+    :date-editor :desktop-icon :desktop-frame :dial :dialog :directory-pane
+    :drawing-area :file-chooser :filler :focus-traversable :font-chooser
+    :frame :glass-pane :html-container :icon :image :internal-frame :label
+    :layered-pane :list :list-item :menu :menu-bar :menu-item :option-pane
+    :page-tab :page-tab-list :panel :password-text :popup-menu :progress-bar
+    :push-button :radio-button :radio-menu-item :root-pane :row-header
+    :scroll-bar :scroll-pane :separator :slider :spin-button :split-pane
+    :status-bar :table :table-cell :table-column-header :table-row-header
+    :tearoff-menu-item :terminal :text :toggle-button :tool-bar :tool-tip
+    :tree :tree-table :unknown :viewport :window :extended :header :footer
+    :paragraph :ruler :application :autocomplete :editbar :embedded :entry
+    :chart :caption :document-frame :heading :page :section :redundant-object
+    :form :link :input-method-window)
+  "List of object roles.")
+
+(defun atspi-decode-role (value)
+  "Convert VALUE (a integer) to an AT-SPI object role (a symbol)."
+  (check-type value integer)
+  (nth value atspi-role-keywords))
+
+(defsubst atspi-tree-entry-get-role (tree-entry)
   "Return the role (a keyword) of the object described by TREE-ENTRY."
   (atspi-decode-role (nth 5 tree-entry)))
 
-(defun atspi-tree-entry-get-description (tree-entry)
+(defsubst atspi-tree-entry-get-description (tree-entry)
   "Return the description of the object described by TREE-ENTRY."
   (nth 6 tree-entry))
 
+(defconst atspi-state-keywords
+  '(:invalid :active :armed :busy :checked :collapsed :defunct :editable
+    :enabled :expandable :expanded :focusable :focused :has-tooltip
+    :horizontal :iconified :modal :multi-line :multiselectable :opaque
+    :pressed :resizable :selectable :selected :sensitive :showing :single-line
+    :stale :transient :vertical :visible :manages-descendants :indeterminate
+    :required :truncated :animated :invalid-entry :supports-autocompletion
+    :selectable-text :is-default :visited)
+  "List of object states.")
+
 (defun atspi-decode-state-bitfields (lower upper)
   "Decode LOWER and UPPER (32bit values) to a list of state keywords."
+  ;; Bitwise operations on potential floating point values
   (let ((bit 31) stateset)
     (while (>= bit 0)
       (let ((amount (expt 2.0 bit)))
@@ -253,9 +300,17 @@ path)."
 	(setq bit (1- bit))))
     stateset))
 
-(defun atspi-tree-entry-get-states (tree-entry)
-  "Return the states associated with the object described by TREE-ENTRY."
-  (apply #'atspi-decode-state-bitfields (nth 7 tree-entry)))
+(defun atspi-tree-entry-get-states (tree-entry &rest allowed)
+  "Return the states associated with the object described by TREE-ENTRY.
+Optionally filter out those states not in ALLOWED."
+  (let ((states (apply #'atspi-decode-state-bitfields (nth 7 tree-entry))))
+    (if allowed
+	(remove-if-not (lambda (state) (member state allowed)) states)
+      states)))
+
+(defun atspi-accessible-states (service path &rest allowed)
+  (apply #'atspi-tree-entry-get-states
+	 (atspi-tree-get-entry service path) allowed))
 
 (mapcar (lambda (role)
 	  (eval
@@ -287,33 +342,24 @@ path)."
    :session application
    "/org/freedesktop/atspi/tree" "org.freedesktop.atspi.Tree" "getRoot"))
 
-(defun atspi-call-text-method (service path method &rest args)
-  "Call `atspi-interface-text' METHOD on object PATH of SERVICE."
-  (check-type service string)
-  (check-type path string)
-  (check-type method string)
-  (apply #'dbus-call-method :session service path atspi-interface-text
-	 method args))
+;;;; Accessible interfaces
 
-(defun atspi-text-get-text (service path &optional start end)
-  "Obtain all or part of the textual content of a Text object PATH of SERVICE."
-  (unless start (setq start 0))
-  (unless end (setq end -1))
-  (dbus-call-text-method service path "getText" :int32 start :int32 end))
+(defmacro atspi-define-accessible-interface (name suffix)
+  "Define `atspi-interface-NAME' and `atspi-call-NAME-method'."
+  (let ((call-method (intern (concat "atspi-call-"
+				     (symbol-name name) "-method")))
+	(interface (intern (concat "atspi-interface-" (symbol-name name)))))
+    `(progn
+       (defconst ,interface (concat atspi-prefix ,suffix)
+	 ,(format "The AT-SPI %s D-Bus interface name.
+To invoke this interface use `%s'." suffix call-method))
+       (defun ,call-method (service path method &rest args)
+	 ,(format "On SERVICE PATH call `%s' METHOD with optional ARGS."
+		  interface)
+	 (apply #'dbus-call-method :session service path
+		,interface method args)))))
 
-(defun atspi-text-get-character-count (service path)
-  (dbus-get-property
-   :session service path atspi-interface-text "characterCount"))
-
-(defun atspi-text-get-caret-offset (application accessible)
-  (dbus-call-method
-   :session application accessible dbus-interface-properties "Get" "org.freedesktop.Text" "caretOffset"))
-
-
-(defun atspi-call-accessible-method (service path method &rest args)
-  "Call METHOD of Accessible object PATH of SERVICE."
-  (apply #'dbus-call-method
-	 :session service path atspi-interface-accessible method args))
+(atspi-define-accessible-interface accessible "Accessible")
 
 (defun atspi-accessible-get-relation-set (service path)
   "Get a set defining the relationship of accessible object PATH of SERVICE to
@@ -321,7 +367,7 @@ other accessible objects."
   (atspi-call-accessible-method service path "getRelationSet"))
 
 (defun atspi-accessible-get-states (service path)
-  "Get the current state of accessible object at PATH of SERVICE."
+  "Get the current state of accessible object SERVICE PATH via D-Bus."
   (apply #'atspi-decode-state-bitfields
 	 (atspi-call-accessible-method service path "getState")))
 
@@ -332,23 +378,37 @@ other accessible objects."
 (defun atspi-accessible-get-role-name (service path)
   (atspi-call-accessible-method service path "getRoleName"))
   
-(defun atspi-call-action-method (service path method &rest args)
-  (apply #'dbus-call-method :session service
-	 path atspi-interface-action method args))
+(atspi-define-accessible-interface action "Action")
 
 (defun atspi-action-get-actions (service path)
   (atspi-call-action-method service path "getActions"))
 
+(atspi-define-accessible-interface text "Text")
+
+(defun atspi-text-get-text (service path &optional start end)
+  "Obtain all or part of the textual content of a Text object PATH of SERVICE."
+  (unless start (setq start 0))
+  (unless end (setq end -1))
+  (atspi-call-text-method service path "getText" :int32 start :int32 end))
+
+(defun atspi-text-get-character-count (service path)
+  (dbus-get-property
+   :session service path atspi-interface-text "characterCount"))
+
+(defun atspi-text-get-caret-offset (application accessible)
+  (dbus-call-method
+   :session application accessible dbus-interface-properties "Get" "org.freedesktop.Text" "caretOffset"))
+
 (defun atspi-invoke-menu-item (service path &optional do-action)
   (interactive
-   (let* ((application (completing-read "Application: "
+   (let* ((application (completing-read "Service: "
 					(atspi-registry-get-applications)))
 	  (alist (mapcar (lambda (info)
 			   (cons (atspi-tree-entry-get-name info)
 				 (atspi-tree-entry-get-path info)))
 			 (remove-if-not
 			  #'atspi-tree-entry-role-menu-item-p
-			  (atspi-get-tree application)))))
+			  (atspi-tree-get-tree application)))))
      (let ((action (completing-read "Menu item: " alist)))
        (list application (cdr (assoc action alist))))))
   (check-type service string)
@@ -359,26 +419,13 @@ other accessible objects."
     (atspi-call-action-method service path "doAction" :int32 index)))
 
 
-;;;; Application Cache
-
-(defvar atspi-applications nil
-  "An alist.")
-
-(defun atspi-applications (&optional reload)
-  (if (and atspi-applications (not reload))
-      atspi-applications
-    (setq atspi-applications
-	  (mapcar (lambda (service)
-		    (cons service (atspi-get-tree service)))
-		  (atspi-registry-get-applications)))))
-
 (defun atspi-tree-find-entry (tree path)
   (find path tree :key #'car :test #'string=))
 
 (defun atspi-define-action-commands (service)
   (interactive (list (completing-read "Service: "
 				      (atspi-registry-get-applications))))
-  (let ((tree (atspi-get-tree service)))
+  (let ((tree (atspi-tree-get-tree service)))
     (dolist (action-object (remove-if-not #'atspi-tree-entry-Action-p tree))
       (let ((accessible-name (atspi-tree-entry-get-name action-object)))
 	(when (> (length accessible-name) 0)
@@ -407,10 +454,14 @@ other accessible objects."
 		    (atspi-call-action-method ,service ,object-path "doAction"
 					      :int32 index)))))))))))
 
-(defun atspi-focus-changed-function (service path)
+(defun atspi-focus-changed-echo-function (service path)
   (let ((tree-entry (atspi-tree-get-entry service path)))
     (when tree-entry
-      (espeak (atspi-tree-entry-get-name tree-entry)))))
+      (let ((role (atspi-tree-entry-get-role tree-entry))
+	    (name (atspi-tree-entry-get-name tree-entry))
+	    (children (atspi-tree-entry-get-description tree-entry))
+	    (description (atspi-tree-entry-get-description tree-entry)))
+	(message (format "Focus now on a %s" role))))))
   
 (defun espeak (string)
   (let ((proc (start-process "espeak" nil "espeak")))
@@ -460,14 +511,14 @@ other accessible objects."
 	  (apply #'widget-create
 	   'atspi-service :tag service
 	   (list (atspi-tree-entry-to-widget service
-					     (car (atspi-get-tree service))))))
+					     (car (atspi-tree-get-tree service))))))
 	(atspi-registry-get-applications)))
 
 ;;;; Client Initialisation
 
 (defcustom atspi-client-initialisation-hook
   '(atspi-registry-register-update-applications-handler
-    atspi-event-register-focus-handler)
+    atspi-event-focus-register-focus-handler)
   "List of functions to call upon at-spi client initialisation."
   :type 'hook
   :options '(atspi-registry-register-update-applications-handler
