@@ -344,6 +344,31 @@ Optionally filter out those states not in ALLOWED."
 
 ;;;; Accessible interfaces
 
+(defun atspi-define-accessible-defun-method (call-method name method)
+  (let* ((func (intern (concat "atspi-" (symbol-name name) "-"
+			      (symbol-name (nth 0 method)))))
+	(args (append (list 'service 'path) (nth 1 method)))
+	(docstring (and (stringp (nth 2 method)) (nth 2 method)))
+	(interactive (or (and docstring (eq (car-safe (nth 3 method))
+					    'interactive) (nth 3 method))
+			 (and (eq (car-safe (nth 2 method))
+				  'interactive) (nth 2 method))))
+	(body (or (and docstring interactive (cddddr method))
+		  (and (or docstring interactive) (cdddr method))
+		  (cddr method))))
+    (append
+     (list 'defun func args)
+     (and docstring (list docstring))
+     (and interactive (list interactive))
+     (list
+      (append (list 'macrolet)
+	      (list (list (list 'call-method '(method &rest args)
+			  (list 'append 
+				(list 'list (list 'quote call-method)
+				      ''service ''path
+				      'method) 'args))))
+	      body)))))
+
 (defmacro atspi-define-accessible-interface (name suffix &rest methods)
   "Define `atspi-interface-NAME' and `atspi-call-NAME-method'."
   (let ((call-method (intern (concat "atspi-call-"
@@ -359,13 +384,13 @@ To invoke this interface use `%s'." suffix call-method))
 	 (apply #'dbus-call-method :session service path
 		,interface method args))
        ,@(mapcar (lambda (method)
-		   (let ((func (intern (concat "atspi-" (symbol-name name) "-"
-					       (symbol-name (nth 0 method)))))
-			 (args (append (list 'service 'path) (nth 1 method))))
-		     (append (list 'defun func args) (cddr method))))
-		 methods))))
+		   (atspi-define-accessible-defun-method
+		    call-method name method)) methods))))
+
+(put 'atspi-define-accessible-interface 'lisp-indent-function 2)
 
 (defun atspi-read-service-and-path (&optional path-predicate)
+  "Prompt user for a D-Bus service and path of an AT-SPI Accessible object."
   (let* ((service (completing-read "Service: "
 				   (atspi-registry-get-applications) nil t))
 	(path (completing-read "Object path: "
@@ -377,16 +402,15 @@ To invoke this interface use `%s'." suffix call-method))
   (get-relation-set ()
     "Get a set defining the relationship of accessible object PATH of SERVICE
 to other accessible objects."
-    (atspi-call-accessible-method service path "getRelationSet"))
+    (call-method "getRelationSet"))
   (get-states ()
     "Get the current state of accessible object SERVICE PATH via D-Bus."
-    (apply #'atspi-decode-state-bitfields
-	   (atspi-call-accessible-method service path "getState")))
+    (apply #'atspi-decode-state-bitfields (call-method "getState")))
   (get-role ()
     "Get the Role indicating the type of ui role played by PATH of SERVICE."
-    (atspi-decode-role (atspi-call-accessible-method service path "getRole")))
+    (atspi-decode-role (call-method "getRole")))
   (get-role-name ()
-    (atspi-call-accessible-method service path "getRoleName")))
+    (call-method "getRoleName")))
   
 (atspi-define-accessible-interface action "Action"
   (get-actions ()
@@ -400,8 +424,8 @@ to other accessible objects."
 	     (completing-read "Action to invoke: "
 			      (atspi-action-get-actions service path) nil t))))
     (when (stringp action)
-      (let ((actions (atspi-action-get-actions service path))
-	    (index (position action actions :key #'car :test #'string=)))
+      (let* ((actions (atspi-action-get-actions service path))
+	     (index (position action actions :key #'car :test #'string=)))
 	(if index
 	    (setq action index)
 	  (error "Action \"%s\" is not defined" action))))
@@ -413,15 +437,48 @@ to other accessible objects."
     "Obtain all or part of the textual content of a Text object."
     (unless start (setq start 0))
     (unless end (setq end -1))
-    (atspi-call-text-method service path "getText" :int32 start :int32 end)))
+    (call-method "getText" :int32 start :int32 end))
+  (set-caret-offset (position)
+    (check-type position integer)
+    (call-method "setCaretOffset" :int32 position)))
+
+(defun atspi-get-property (service path interface property)
+  (dbus-call-method
+   :session service path dbus-interface-properties "Get" interface property))
 
 (defun atspi-text-get-character-count (service path)
-  (dbus-get-property
-   :session service path atspi-interface-text "characterCount"))
+  (car-safe
+   (atspi-get-property service path atspi-interface-text "characterCount")))
 
-(defun atspi-text-get-caret-offset (application accessible)
-  (dbus-call-method
-   :session application accessible dbus-interface-properties "Get" "org.freedesktop.Text" "caretOffset"))
+(defun atspi-text-get-caret-offset (service path)
+  (car-safe
+   (atspi-get-property service path atspi-interface-text "caretOffset")))
+
+(atspi-define-accessible-interface editable-text "EditableText"
+  (set-text-contents (string)
+    "Replace the text contents with a new STRING, discarding the old contents.
+Return t if the text content was successfully changed, nil otherwise."
+    (interactive
+     (destructuring-bind (service path)
+	 (atspi-read-service-and-path #'atspi-tree-entry-EditableText-p)
+       (list service path
+	     (read-string "New text contents: "))))
+    (check-type string string)
+    (let ((result (atspi-call-editable-text-method
+		   service path "setTextContents"
+		   (encode-coding-string string 'utf-8))))
+      (if (interactive-p)
+	  (if result
+	      (message "Text content changed successfully")
+	    (message "Failed to change text content"))
+	result)))
+  (insert-text (position string)
+    "At POSITION (a integer) insert STRING into an EditableText object."
+    (atspi-call-editable-text-method
+     service path "insertText"
+     :int32 position
+     :string (encode-coding-string string 'utf-8)
+     :int32 (length string))))
 
 (defun atspi-invoke-menu-item (service path &optional do-action)
   (interactive
@@ -438,7 +495,7 @@ to other accessible objects."
   (check-type service string)
   (check-type path string)
   (unless do-action (setq do-action "click"))
-  (atspi-action-do-action service path do-action)))
+  (atspi-action-do-action service path do-action))
 
 (defun atspi-tree-find-entry (tree path)
   (find path tree :key #'car :test #'string=))
