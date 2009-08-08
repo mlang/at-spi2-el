@@ -344,7 +344,7 @@ Optionally filter out those states not in ALLOWED."
 
 ;;;; Accessible interfaces
 
-(defmacro atspi-define-accessible-interface (name suffix)
+(defmacro atspi-define-accessible-interface (name suffix &rest methods)
   "Define `atspi-interface-NAME' and `atspi-call-NAME-method'."
   (let ((call-method (intern (concat "atspi-call-"
 				     (symbol-name name) "-method")))
@@ -357,39 +357,39 @@ To invoke this interface use `%s'." suffix call-method))
 	 ,(format "On SERVICE PATH call `%s' METHOD with optional ARGS."
 		  interface)
 	 (apply #'dbus-call-method :session service path
-		,interface method args)))))
+		,interface method args))
+       ,@(mapcar (lambda (method)
+		   (let ((func (intern (concat "atspi-" (symbol-name name) "-"
+					       (symbol-name (nth 0 method)))))
+			 (args (append (list 'service 'path) (nth 1 method))))
+		     (append (list 'defun func args) (cddr method))))
+		 methods))))
 
-(atspi-define-accessible-interface accessible "Accessible")
-
-(defun atspi-accessible-get-relation-set (service path)
-  "Get a set defining the relationship of accessible object PATH of SERVICE to
-other accessible objects."
-  (atspi-call-accessible-method service path "getRelationSet"))
-
-(defun atspi-accessible-get-states (service path)
-  "Get the current state of accessible object SERVICE PATH via D-Bus."
-  (apply #'atspi-decode-state-bitfields
-	 (atspi-call-accessible-method service path "getState")))
-
-(defun atspi-accessible-get-role (service path)
-  "Get the Role indicating the type of ui role played by PATH of SERVICE."
-  (atspi-decode-role (atspi-call-accessible-method service path "getRole")))
-
-(defun atspi-accessible-get-role-name (service path)
-  (atspi-call-accessible-method service path "getRoleName"))
+(atspi-define-accessible-interface accessible "Accessible"
+  (get-relation-set ()
+    "Get a set defining the relationship of accessible object PATH of SERVICE
+to other accessible objects."
+    (atspi-call-accessible-method service path "getRelationSet"))
+  (get-states ()
+    "Get the current state of accessible object SERVICE PATH via D-Bus."
+    (apply #'atspi-decode-state-bitfields
+	   (atspi-call-accessible-method service path "getState")))
+  (get-role ()
+    "Get the Role indicating the type of ui role played by PATH of SERVICE."
+    (atspi-decode-role (atspi-call-accessible-method service path "getRole")))
+  (get-role-name ()
+    (atspi-call-accessible-method service path "getRoleName")))
   
-(atspi-define-accessible-interface action "Action")
+(atspi-define-accessible-interface action "Action"
+  (get-actions ()
+    (atspi-call-action-method service path "getActions")))
 
-(defun atspi-action-get-actions (service path)
-  (atspi-call-action-method service path "getActions"))
-
-(atspi-define-accessible-interface text "Text")
-
-(defun atspi-text-get-text (service path &optional start end)
-  "Obtain all or part of the textual content of a Text object PATH of SERVICE."
-  (unless start (setq start 0))
-  (unless end (setq end -1))
-  (atspi-call-text-method service path "getText" :int32 start :int32 end))
+(atspi-define-accessible-interface text "Text"
+  (get-text (&optional start end)
+    "Obtain all or part of the textual content of a Text object."
+    (unless start (setq start 0))
+    (unless end (setq end -1))
+    (atspi-call-text-method service path "getText" :int32 start :int32 end)))
 
 (defun atspi-text-get-character-count (service path)
   (dbus-get-property
