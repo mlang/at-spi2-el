@@ -365,6 +365,14 @@ To invoke this interface use `%s'." suffix call-method))
 		     (append (list 'defun func args) (cddr method))))
 		 methods))))
 
+(defun atspi-read-service-and-path (&optional path-predicate)
+  (let* ((service (completing-read "Service: "
+				   (atspi-registry-get-applications) nil t))
+	(path (completing-read "Object path: "
+			       (atspi-tree-get-tree service) path-predicate
+			       t)))
+    (list service path)))
+
 (atspi-define-accessible-interface accessible "Accessible"
   (get-relation-set ()
     "Get a set defining the relationship of accessible object PATH of SERVICE
@@ -382,7 +390,23 @@ to other accessible objects."
   
 (atspi-define-accessible-interface action "Action"
   (get-actions ()
-    (atspi-call-action-method service path "getActions")))
+    (atspi-call-action-method service path "getActions"))
+  (do-action (action)
+    "Invoke ACTION (a string or integer index) of Action object SERVICE PATH."
+    (interactive
+     (destructuring-bind (service path) (atspi-read-service-and-path
+					 #'atspi-tree-entry-Action-p)
+       (list service path
+	     (completing-read "Action to invoke: "
+			      (atspi-action-get-actions service path) nil t))))
+    (when (stringp action)
+      (let ((actions (atspi-action-get-actions service path))
+	    (index (position action actions :key #'car :test #'string=)))
+	(if index
+	    (setq action index)
+	  (error "Action \"%s\" is not defined" action))))
+    (check-type action integer)
+    (atspi-call-action-method service path "doAction" :int32 action)))
 
 (atspi-define-accessible-interface text "Text"
   (get-text (&optional start end)
