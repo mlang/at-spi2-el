@@ -140,7 +140,7 @@ which is run by `atspi-client-initialize'."
   :options '(atspi-focus-changed-echo-function)
   :link '(function-link atspi-client-initialize)
   :link '(variable-link atspi-client-initialisation-hook)
-  :link '(function-link atspi-event-register-focus-handler))
+  :link '(function-link atspi-event-focus-register-focus-handler))
 
 (defconst atspi-interface-event-focus (concat atspi-prefix "Event.Focus"))
 
@@ -148,12 +148,37 @@ which is run by `atspi-client-initialize'."
   nil nil
   "focus" (&rest ignore)
   "Call `atspi-focus-changed-hook' when a focus signal is received."
-  (run-hook-with-args
-   'atspi-focus-changed-hook
-   (dbus-event-service-name event) (dbus-event-path-name event)))
+  (let ((service (dbus-event-service-name last-input-event))
+	(path (dbus-event-path-name last-input-event)))
+    (run-hook-with-args 'atspi-focus-changed-hook service path)))
+
+(atspi-define-signal tree update-accessible
+  nil atspi-path-tree
+  "updateAccessible" (tree-entry)
+  (let ((service (dbus-event-service-name last-input-event)))
+    (if (not atspi-applications)
+	(setq atspi-applications
+	      (list (list service tree-entry)))
+      (let ((old-tree (assoc service atspi-applications)))
+	(if (not old-tree)
+	    (setq atspi-applications
+		  (nconc (list (list service tree-entry))
+			 atspi-applications))
+	  (let ((path (atspi-tree-entry-get-path tree-entry))
+		(old-tree-entries (cdr old-tree)) (found nil))
+	    (while old-tree-entries
+	      (if (string= (atspi-tree-entry-get-path (car old-tree-entries))
+			   path)
+		  (progn
+		    (setcar old-tree-entries tree-entry)
+		    (setq old-tree-entries nil found t))
+		(setq old-tree-entries (cdr old-tree-entries))))
+	    (unless found
+	      (setcdr old-tree
+		      (append (cdr old-tree) (list tree-entry))))))))))
 
 (defun atspi-tree-remove-accessible-handler (path)
-  (let ((service (dbus-event-service-name event)))
+  (let ((service (dbus-event-service-name last-input-event)))
     (message "%s of %s was removed" path service)))
 
 (defun atspi-tree-install-remove-accessible-handler ()
@@ -248,7 +273,7 @@ For invocation see `atspi-call-tree-method'.")
       name)))
 
 (defconst atspi-role-keywords
-  '(:invalid :accelerator-label :alter :animation :arrow :calendar :canvas
+  '(:invalid :accelerator-label :alert :animation :arrow :calendar :canvas
     :check-box :check-menu-item :color-chooser :column-header :combo-box
     :date-editor :desktop-icon :desktop-frame :dial :dialog :directory-pane
     :drawing-area :file-chooser :filler :focus-traversable :font-chooser
@@ -607,57 +632,76 @@ Return t if the text content was successfully changed, nil otherwise."
 
 (require 'tree-widget)
 
+(defun atspi-service-widget-expander (widget)
+  (let ((service (widget-get widget :service)))
+    (mapcar (lambda (tree-entry)
+	      (atspi-tree-entry-to-widget service tree-entry))
+	    (atspi-tree-toplevel-entries (atspi-tree-get-tree service)))))
+
 (define-widget 'atspi-service 'tree-widget
   "AT-SPI widget to represent toplevel services."
-  :tag "Service")
+  :expander #'atspi-service-widget-expander)
 
+(defsubst atspi-widget-apply (widget function &rest args)
+  (apply function (widget-get widget :service) (widget-get widget :path) args))
+
+(defun atspi-widget-expander (widget)
+  (let ((service (widget-get widget :service)))
+    (mapcar (lambda (path)
+	      (let ((entry (atspi-tree-get-entry service path)))
+		(atspi-tree-entry-to-widget service entry)))
+	    (atspi-tree-entry-get-children
+	     (atspi-widget-apply widget #'atspi-tree-get-entry)))))
 (defun atspi-tree-entry-to-widget (service tree-entry)
   (let ((children (atspi-tree-entry-get-children tree-entry))
 	(name (atspi-tree-entry-get-name tree-entry))
+	(role (atspi-tree-entry-get-role tree-entry))
 	(path (atspi-tree-entry-get-path tree-entry)))
-    (list 'tree-widget
-	  :tag name
-	  :service service
-	  :path path
-	  :has-children (> (length children) 0)
-	  :dynargs (lambda (widget)
-		     (let ((service (widget-get widget :service))
-			   (path (widget-get widget :path)))
-		       (mapcar (lambda (path)
-				 (let ((entry (atspi-tree-get-entry service
-								    path)))
-				   (atspi-tree-entry-to-widget service entry)))
-			       (atspi-tree-entry-get-children
-				(atspi-tree-get-entry service path))))))))
+    (when (not (> (length name) 0)) (setq name nil))
+    (setq role (substring (symbol-name role) 1))
+    (list
+     'tree-widget
+     :tag (or name role)
+     :service service
+     :path path
+     :expander (when (> (length children) 0) #'atspi-widget-expander))))
+
+(defconst atspi-path-accessible-root "/org/freedesktop/atspi/accessible/root")
+
+(defun atspi-tree-toplevel-entries (tree)
+  (remove-if-not (lambda (entry) (string= (atspi-tree-entry-get-parent entry)
+					  atspi-path-accessible-root))
+		 tree))
+
+(define-derived-mode atspi-browser-mode special-mode "AT-SPI"
+  "Major mode for interacting with an external network utility."
+  (widget-minor-mode 1))
 
 (defun atspi-browser ()
   "Draw a tree of all accessible objects."
   (interactive)
   (switch-to-buffer "*AT-SPI Browser*")
   (kill-all-local-variables)
-    (let ((inhibit-read-only t))
+  (let ((inhibit-read-only t))
     (erase-buffer))
-  ;(let ((all (tree-widget-sample-overlay-lists)))
-  ;  (mapcar #'tree-widget-sample-delete-overlay (car all))
-  ;  (mapcar #'tree-widget-sample-delete-overlay (cdr all)))
+  (atspi-browser-mode)
 
   (widget-insert (format "%s\n\n" (buffer-name)))
   (mapc (lambda (service)
-	  (apply #'widget-create
-	   'atspi-service :tag service
-	   (list (atspi-tree-entry-to-widget service
-					     (car (atspi-tree-get-tree service))))))
+	  (widget-create 'atspi-service :tag service :service service))
 	(atspi-registry-get-applications)))
 
 ;;;; Client Initialisation
 
 (defcustom atspi-client-initialisation-hook
   '(atspi-registry-register-update-applications-handler
+    atspi-tree-register-update-accessible-handler
     atspi-event-focus-register-focus-handler)
   "List of functions to call upon at-spi client initialisation."
   :type 'hook
   :options '(atspi-registry-register-update-applications-handler
-	     atspi-event-register-focus-handler))
+	     atspi-tree-register-update-accessible-handler
+	     atspi-event-focus-register-focus-handler))
 
 (defun atspi-client-initialize ()
   "Initialize signal handlers."
