@@ -20,10 +20,8 @@
 
 ;;; Commentary:
 
-;; 
-
-;;; History:
-;; 
+;; For this file to be useful at all you need at-spi2-core and at-spi2-atk
+;; from https://projects.codethink.co.uk/index.php/p/at-spi2/
 
 ;;; Code:
 
