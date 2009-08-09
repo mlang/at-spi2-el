@@ -152,30 +152,69 @@ which is run by `atspi-client-initialize'."
 	(path (dbus-event-path-name last-input-event)))
     (run-hook-with-args 'atspi-focus-changed-hook service path)))
 
+(defcustom atspi-accessible-updated-hook '(atspi-log-cache-update)
+  "Hook run when an accessible cache entry was updated."
+  :type 'hook
+  :options '(atspi-log-cache-update))
+
+(defun atspi-debug (message &rest args)
+  (display-warning 'atspi (apply #'format message args) :debug))
+
+(defun atspi-log-cache-update (service old-entry new-entry)
+  (macrolet ((compare-cache-value (accessor comparator &rest body)
+	       `(let ((old (,accessor old-entry))
+		      (new (,accessor new-entry)))
+		  (unless (,comparator old new) ,@body))))
+    (let ((path (atspi-tree-entry-get-path new-entry)))
+      (when old-entry
+	(compare-cache-value atspi-tree-entry-get-parent string=
+	 (atspi-debug "%s%s parent changed from %s to %s"
+		      service path old new))
+	(compare-cache-value atspi-tree-entry-get-children equal
+	 (atspi-debug "%s%s children changed from %s to %s"
+		      service path old new))
+	(compare-cache-value atspi-tree-entry-get-interface-names equal
+	 (atspi-debug "%s%s interfaces changed from %s to %s"
+		      service path old new))
+	(compare-cache-value atspi-tree-entry-get-name string=
+	 (atspi-debug "%s%s accessible name changed from %s to %s"
+		      service path old new))
+	(compare-cache-value atspi-tree-entry-get-role eq
+	 (atspi-debug "%s%s role changed from %s to %s"
+		      service path old new))
+	(compare-cache-value atspi-tree-entry-get-description string=
+	 (atspi-debug "%s%s accessible description changed from %s to %s"
+		      service path old new))
+	(compare-cache-value atspi-tree-entry-get-states equal
+	 (atspi-debug "%s%s states changed from %s to %s"
+		      service path old new))))))
+
 (atspi-define-signal tree update-accessible
   nil atspi-path-tree
   "updateAccessible" (tree-entry)
-  (let ((service (dbus-event-service-name last-input-event)))
+  (let ((service (dbus-event-service-name last-input-event))
+	(old-tree-entry nil))
     (if (not atspi-applications)
 	(setq atspi-applications
 	      (list (list service tree-entry)))
-      (let ((old-tree (assoc service atspi-applications)))
-	(if (not old-tree)
+      (let ((tree (assoc service atspi-applications)))
+	(if (not tree)
 	    (setq atspi-applications
-		  (nconc (list (list service tree-entry))
-			 atspi-applications))
+		  (append (list (list service tree-entry)) atspi-applications))
 	  (let ((path (atspi-tree-entry-get-path tree-entry))
-		(old-tree-entries (cdr old-tree)) (found nil))
-	    (while old-tree-entries
-	      (if (string= (atspi-tree-entry-get-path (car old-tree-entries))
-			   path)
+		(tree-entries (cdr tree)) (found nil))
+	    (while tree-entries
+	      (if (string= (atspi-tree-entry-get-path (car tree-entries)) path)
 		  (progn
-		    (setcar old-tree-entries tree-entry)
-		    (setq old-tree-entries nil found t))
-		(setq old-tree-entries (cdr old-tree-entries))))
+		    (setq old-tree-entry (car tree-entries))
+		    (setcar tree-entries tree-entry)
+		    (setq tree-entries nil found t))
+		(setq tree-entries (cdr tree-entries))))
 	    (unless found
-	      (setcdr old-tree
-		      (append (cdr old-tree) (list tree-entry))))))))))
+	      (setcdr tree (append (cdr tree) (list tree-entry))))))))
+    (unless (equal old-tree-entry tree-entry)
+      (run-hook-with-args
+       'atspi-accessible-updated-hook service old-tree-entry tree-entry))))
 
 (defun atspi-tree-remove-accessible-handler (path)
   (let ((service (dbus-event-service-name last-input-event)))
@@ -580,7 +619,8 @@ Return t if the text content was successfully changed, nil otherwise."
   (atspi-action-do-action service path do-action))
 
 (defun atspi-tree-find-entry (tree path)
-  (find path tree :key #'car :test #'string=))
+  (check-type path string)
+  (find path tree :key #'atspi-tree-entry-get-path :test #'string=))
 
 (defun atspi-tree-entry-get-all-parents (tree-entry tree)
   (let ((path ()))
