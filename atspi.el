@@ -125,9 +125,19 @@ registered with D-Bus." 'dbus-register-signal handler)))
   "Informs us WHAT has changed about SERVICE."
   (cond
    ((= what 0)
-    (run-hook-with-args 'atspi-application-added-hook service))
+    (if (assoc service atspi-applications)
+	(display-warning
+	 'atspi (format "Add application request of already known service %s"
+			service)
+	 :warning)
+      (run-hook-with-args 'atspi-application-added-hook service)))
    ((= what 1)
-    (run-hook-with-args 'atspi-application-removed-hook service))))
+    (if (not (assoc service atspi-applications))
+	(display-warning
+	 'atspi (format "Remove application request of unkown service %s"
+			service)
+	 :warning)
+      (run-hook-with-args 'atspi-application-removed-hook service)))))
 
 (defcustom atspi-focus-changed-hook nil
   "List of functions to call when focus has changed.
@@ -328,13 +338,27 @@ Optionally filter out those states not in ALLOWED."
 	       t))))
 	'(Action Application Component EditableText Text))
 
+(defcustom atspi-accessible-added-hook '(atspi-log-cache-addition)
+  "Hook run when an accessible cache entry is added.
+Arguments are (SERVICE TREE-ENTRY)"
+  :type 'hook
+  :options '(atspi-log-cache-addition))
+
 (defcustom atspi-accessible-updated-hook '(atspi-log-cache-update)
-  "Hook run when an accessible cache entry was updated."
+  "Hook run when an accessible cache entry was updated.
+Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
   :type 'hook
   :options '(atspi-log-cache-update))
 
 (defun atspi-debug (message &rest args)
-  (display-warning 'atspi (apply #'format message args) :debug))
+  (let ((warning-minimum-log-level :debug)
+	(warning-fill-prefix "  "))
+    (display-warning 'atspi (apply #'format message args)
+		     :debug "*AT-SPI Debug*")))
+
+(defun atspi-log-cache-addition (service tree-entry)
+  (let ((path (atspi-tree-entry-get-path tree-entry)))
+    (atspi-debug "New accessible object %s%s" service path)))
 
 (defun atspi-log-cache-update (service old-entry new-entry)
   (macrolet ((compare-cache-value (accessor comparator &rest body)
@@ -342,36 +366,34 @@ Optionally filter out those states not in ALLOWED."
 		      (new (,accessor new-entry)))
 		  (unless (,comparator old new) ,@body))))
     (let ((path (atspi-tree-entry-get-path new-entry)))
-      (when old-entry
-	(compare-cache-value atspi-tree-entry-get-parent string=
-	 (atspi-debug "%s%s parent changed from %s to %s"
-		      service path old new))
-	(compare-cache-value atspi-tree-entry-get-children equal
-	 (atspi-debug "%s%s children changed from %s to %s"
-		      service path old new))
-	(compare-cache-value atspi-tree-entry-get-interface-names equal
-	 (atspi-debug "%s%s interfaces changed from %s to %s"
-		      service path old new))
-	(compare-cache-value atspi-tree-entry-get-name string=
-	 (atspi-debug "%s%s accessible name changed from %s to %s"
-		      service path old new))
-	(compare-cache-value atspi-tree-entry-get-role eq
-	 (atspi-debug "%s%s role changed from %s to %s"
-		      service path old new))
-	(compare-cache-value atspi-tree-entry-get-description string=
-	 (atspi-debug "%s%s accessible description changed from %s to %s"
-		      service path old new))
-	(compare-cache-value atspi-tree-entry-get-states equal
-	 (atspi-debug "%s%s states changed from %s to %s"
-		      service path old new))))))
+      (compare-cache-value atspi-tree-entry-get-parent string=
+       (atspi-debug "%s%s parent changed from %s to %s"
+		    service path old new))
+      (compare-cache-value atspi-tree-entry-get-children equal
+       (atspi-debug "%s%s children changed from %s to %s"
+		    service path old new))
+      (compare-cache-value atspi-tree-entry-get-interface-names equal
+       (atspi-debug "%s%s interfaces changed from %s to %s"
+		    service path old new))
+      (compare-cache-value atspi-tree-entry-get-name string=
+       (atspi-debug "%s%s accessible name changed from %s to %s"
+		    service path old new))
+      (compare-cache-value atspi-tree-entry-get-role eq
+       (atspi-debug "%s%s role changed from %s to %s"
+		    service path old new))
+      (compare-cache-value atspi-tree-entry-get-description string=
+       (atspi-debug "%s%s accessible description changed from %s to %s"
+		    service path old new))
+      (compare-cache-value atspi-tree-entry-get-states equal
+       (atspi-debug "%s%s states changed from %s to %s"
+		    service path old new)))))
 
 (atspi-define-signal tree update-accessible
   nil atspi-path-tree "updateAccessible" (tree-entry)
   (let ((service (dbus-event-service-name last-input-event))
 	(old-tree-entry nil))
     (if (not atspi-applications)
-	(setq atspi-applications
-	      (list (list service tree-entry)))
+	(setq atspi-applications (list (list service tree-entry)))
       (let ((tree (assoc service atspi-applications)))
 	(if (not tree)
 	    (setq atspi-applications
@@ -387,9 +409,16 @@ Optionally filter out those states not in ALLOWED."
 		(setq tree-entries (cdr tree-entries))))
 	    (unless found
 	      (setcdr tree (append (cdr tree) (list tree-entry))))))))
-    (unless (equal old-tree-entry tree-entry)
-      (run-hook-with-args
-       'atspi-accessible-updated-hook service old-tree-entry tree-entry))))
+    (if (not old-tree-entry)
+	(run-hook-with-args
+	 'atspi-accessible-added-hook service tree-entry)
+      (if (equal old-tree-entry tree-entry)
+	  (display-warning
+	   'atspi (format "Cache update with apparently equal data %S"
+			  tree-entry)
+	   :warning)
+	(run-hook-with-args
+	 'atspi-accessible-updated-hook service old-tree-entry tree-entry)))))
 
 (defun atspi-log-cache-removal (service tree-entry)
   (atspi-debug "Cache removal of %s:%S" service tree-entry))
@@ -544,7 +573,7 @@ bridge implementation."
 
 (atspi-define-accessible-interface action "Action"
   (get-actions ()
-    (atspi-call-action-method service path "getActions"))
+    (call-method "getActions"))
   (do-action (action)
     "Invoke ACTION (a string or integer index) of Action object SERVICE PATH."
     (interactive
@@ -560,7 +589,7 @@ bridge implementation."
 	    (setq action index)
 	  (error "Action \"%s\" is not defined" action))))
     (check-type action integer)
-    (atspi-call-action-method service path "doAction" :int32 action)))
+    (call-method "doAction" :int32 action)))
 
 (defun atspi-interface-implemented-p (service path interface)
   (member interface (atspi-list-accessible-interface-names service path)))
@@ -773,11 +802,13 @@ Return t if the text content was successfully changed, nil otherwise."
 (defcustom atspi-client-initialisation-hook
   '(atspi-registry-register-update-applications-handler
     atspi-tree-register-update-accessible-handler
+    atspi-tree-register-remove-accessible-handler
     atspi-event-focus-register-focus-handler)
   "List of functions to call upon at-spi client initialisation."
   :type 'hook
   :options '(atspi-registry-register-update-applications-handler
 	     atspi-tree-register-update-accessible-handler
+	     atspi-tree-register-remove-accessible-handler
 	     atspi-event-focus-register-focus-handler))
 
 (defun atspi-client-initialize ()
