@@ -27,6 +27,7 @@
 
 (require 'cl)
 (require 'dbus)
+(require 'warnings)
 
 (defconst atspi-prefix "org.freedesktop.atspi."
   "Common prefix for AT-SPI D-Bus service and interface names.")
@@ -169,6 +170,36 @@ which is run by `atspi-client-initialize'."
 		(append (list (cons service path)) atspi-locus-of-focus ))
 	(setcdr locus path)))
     (run-hook-with-args 'atspi-focus-changed-hook service path)))
+
+(defconst atspi-interface-event-window (concat atspi-prefix "Event.Window"))
+
+(defcustom atspi-window-activated-hook nil
+  "Hook run when a window is activated."
+  :group 'atspi
+  :type 'hook)
+
+(defcustom atspi-window-deactivated-hook nil
+  "Hook run when a window is deactivated."
+  :group 'atspi
+  :type 'hook)
+
+(atspi-define-signal event-window activate
+  nil nil
+  "activate" (&rest ignore)
+  "Call `atspi-window-activated-hook'."
+  (let ((service (dbus-event-service-name last-input-event))
+	(path (dbus-event-path-name last-input-event)))
+    (atspi-debug "Window %s%s activated" service path)
+    (run-hook-with-args 'atspi-window-activated-hook service path)))
+
+(atspi-define-signal event-window deactivate
+  nil nil
+  "deactivate" (&rest ignore)
+  "Call `atspi-window-deactivated-hook'."
+  (let ((service (dbus-event-service-name last-input-event))
+	(path (dbus-event-path-name last-input-event)))
+    (atspi-debug "Window %s%s deactivated" service path)
+    (run-hook-with-args 'atspi-window-deactivated-hook service path)))
 
 ;;;; Tree of accessible objects
 
