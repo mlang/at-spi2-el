@@ -119,92 +119,10 @@ registered with D-Bus." 'dbus-register-signal handler)))
 	       (dbus-register-signal
 		:session ,service ,path ,interface ,signal #',handler))))))
 
-(atspi-define-signal registry update-applications
-  atspi-service-registry atspi-path-registry
-  "updateApplications" (what service)
-  "Informs us WHAT has changed about SERVICE."
-  (check-type what (integer 0 1))
-  (check-type service string)
-  (cond
-   ((= what 1)
-    (when (assoc service atspi-applications)
-      (display-warning
-       'atspi (format "Add application request of already known service %s"
-		      service)
-       :warning))
-    (run-hook-with-args 'atspi-application-added-hook service))
-   ((= what 0)
-    (let ((tree (assoc service atspi-applications)))
-      (if (not tree)
-	  (display-warning
-	   'atspi (format "Remove application request of unkown service %s"
-			  service)
-	   :warning)
-	(setq atspi-applications (delq tree atspi-applications))
-	(apply #'run-hook-with-args 'atspi-application-removed-hook tree))))))
-
-(defcustom atspi-focus-changed-hook nil
-  "List of functions to call when focus has changed.
-Arguments passed are SERVICE and PATH of the accessible object that just
-received focus.
-For this hook to fire `atspi-event-focus-register-focus-handler' needs to be
-called at some point, possibly from `atspi-client-initialisation-hook'
-which is run by `atspi-client-initialize'."
-  :type 'hook
-  :options '(atspi-focus-changed-echo-function)
-  :link '(function-link atspi-client-initialize)
-  :link '(variable-link atspi-client-initialisation-hook)
-  :link '(function-link atspi-event-focus-register-focus-handler))
-
-(defconst atspi-interface-event-focus (concat atspi-prefix "Event.Focus")
-  "Interface for \"focus\" signals.")
-
-(defvar atspi-locus-of-focus nil)
-
-(atspi-define-signal event-focus focus
-  nil nil
-  "focus" ()
-  "Call `atspi-focus-changed-hook' when a focus signal is received."
-  (let ((service (dbus-event-service-name last-input-event))
-	(path (dbus-event-path-name last-input-event)))
-    (let ((locus (assoc service atspi-locus-of-focus)))
-      (if (not locus)
-	  (setq atspi-locus-of-focus
-		(append (list (cons service path)) atspi-locus-of-focus))
-	(setcdr locus path)))
-    (run-hook-with-args 'atspi-focus-changed-hook service path)))
-
-(defconst atspi-interface-event-window (concat atspi-prefix "Event.Window"))
-
-(defcustom atspi-window-activated-hook nil
-  "Hook run when a window is activated."
-  :group 'atspi
-  :type 'hook)
-
-(defcustom atspi-window-deactivated-hook nil
-  "Hook run when a window is deactivated."
-  :group 'atspi
-  :type 'hook)
-
-(atspi-define-signal event-window activate
-  nil nil
-  "activate" (&rest ignore)
-  "Call `atspi-window-activated-hook'."
-  (let ((service (dbus-event-service-name last-input-event))
-	(path (dbus-event-path-name last-input-event)))
-    (atspi-debug "Window %s%s activated" service path)
-    (run-hook-with-args 'atspi-window-activated-hook service path)))
-
-(atspi-define-signal event-window deactivate
-  nil nil
-  "deactivate" (&rest ignore)
-  "Call `atspi-window-deactivated-hook'."
-  (let ((service (dbus-event-service-name last-input-event))
-	(path (dbus-event-path-name last-input-event)))
-    (atspi-debug "Window %s%s deactivated" service path)
-    (run-hook-with-args 'atspi-window-deactivated-hook service path)))
-
-;;;; Tree of accessible objects
+(defvar atspi-applications nil
+  "AT-SPI object cache.
+An alist where the car of each element is the D-Bus service name of the
+application and the cdr is a list of object information.")
 
 (defconst atspi-interface-tree (concat atspi-prefix "Tree")
   "Tree of accessible objects D-Bus interface name.
@@ -227,17 +145,6 @@ For invocation see `atspi-call-tree-method'.")
 (defsubst atspi-tree-entry-get-path (tree-entry)
   "Return the D-Bus path of the accessible object described by TREE-ENTRY."
   (nth 0 tree-entry))
-
-(defvar atspi-applications nil
-  "AT-SPI object cache.")
-
-(defun atspi-applications (&optional reload)
-  (if (and atspi-applications (not reload))
-      atspi-applications
-    (setq atspi-applications
-	  (mapcar (lambda (service)
-		    (cons service (atspi-tree-get-tree service)))
-		  (atspi-registry-get-applications)))))
 
 (defun atspi-tree-get-entry (service path)
   "Return the cache entry describing accessible of SERVICE located at PATH."
@@ -504,6 +411,99 @@ Arguments passed are (SERVICE PATH)."
   (dbus-call-method
    :session application
    "/org/freedesktop/atspi/tree" "org.freedesktop.atspi.Tree" "getRoot"))
+
+(defun atspi-applications (&optional reload)
+  (if (and atspi-applications (not reload))
+      atspi-applications
+    (setq atspi-applications
+	  (mapcar (lambda (service)
+		    (cons service (atspi-tree-get-tree service)))
+		  (atspi-registry-get-applications)))))
+
+(atspi-define-signal registry update-applications
+  atspi-service-registry atspi-path-registry
+  "updateApplications" (what service)
+  "Informs us WHAT has changed about SERVICE."
+  (check-type what (integer 0 1))
+  (check-type service string)
+  (cond
+   ((= what 1)
+    (when (assoc service atspi-applications)
+      (display-warning
+       'atspi (format "Add application request of already known service %s"
+		      service)
+       :warning))
+    (run-hook-with-args 'atspi-application-added-hook service))
+   ((= what 0)
+    (let ((tree (assoc service atspi-applications)))
+      (if (not tree)
+	  (display-warning
+	   'atspi (format "Remove application request of unkown service %s"
+			  service)
+	   :warning)
+	(setq atspi-applications (delq tree atspi-applications))
+	(apply #'run-hook-with-args 'atspi-application-removed-hook tree))))))
+
+(defcustom atspi-focus-changed-hook nil
+  "List of functions to call when focus has changed.
+Arguments passed are SERVICE and PATH of the accessible object that just
+received focus.
+For this hook to fire `atspi-event-focus-register-focus-handler' needs to be
+called at some point, possibly from `atspi-client-initialisation-hook'
+which is run by `atspi-client-initialize'."
+  :type 'hook
+  :options '(atspi-focus-changed-echo-function)
+  :link '(function-link atspi-client-initialize)
+  :link '(variable-link atspi-client-initialisation-hook)
+  :link '(function-link atspi-event-focus-register-focus-handler))
+
+(defconst atspi-interface-event-focus (concat atspi-prefix "Event.Focus")
+  "Interface for \"focus\" signals.")
+
+(defvar atspi-locus-of-focus nil)
+
+(atspi-define-signal event-focus focus
+  nil nil
+  "focus" ()
+  "Call `atspi-focus-changed-hook' when a focus signal is received."
+  (let ((service (dbus-event-service-name last-input-event))
+	(path (dbus-event-path-name last-input-event)))
+    (let ((locus (assoc service atspi-locus-of-focus)))
+      (if (not locus)
+	  (setq atspi-locus-of-focus
+		(append (list (cons service path)) atspi-locus-of-focus))
+	(setcdr locus path)))
+    (run-hook-with-args 'atspi-focus-changed-hook service path)))
+
+(defconst atspi-interface-event-window (concat atspi-prefix "Event.Window"))
+
+(defcustom atspi-window-activated-hook nil
+  "Hook run when a window is activated."
+  :group 'atspi
+  :type 'hook)
+
+(defcustom atspi-window-deactivated-hook nil
+  "Hook run when a window is deactivated."
+  :group 'atspi
+  :type 'hook)
+
+(atspi-define-signal event-window activate
+  nil nil
+  "activate" (&rest ignore)
+  "Call `atspi-window-activated-hook'."
+  (let ((service (dbus-event-service-name last-input-event))
+	(path (dbus-event-path-name last-input-event)))
+    (atspi-debug "Window %s%s activated" service path)
+    (run-hook-with-args 'atspi-window-activated-hook service path)))
+
+(atspi-define-signal event-window deactivate
+  nil nil
+  "deactivate" (&rest ignore)
+  "Call `atspi-window-deactivated-hook'."
+  (let ((service (dbus-event-service-name last-input-event))
+	(path (dbus-event-path-name last-input-event)))
+    (atspi-debug "Window %s%s deactivated" service path)
+    (run-hook-with-args 'atspi-window-deactivated-hook service path)))
 
 ;;;; Accessible interfaces
 
