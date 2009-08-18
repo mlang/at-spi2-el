@@ -60,10 +60,8 @@ For invocation of methods on this interface see `atspi-call-registry-method'.")
 
 (defun atspi-registry-get-applications ()
   "Gets all the currently registered applications.
-Returns a list of D-Bus service names."
+Return a list of D-Bus service names."
   (dbus-ignore-errors (atspi-call-registry-method "getApplications")))
-
-;;;;; Signal handler for updateApplications
 
 (defcustom atspi-application-added-hook '(atspi-define-action-commands)
   "List of functions to call when a new application was added to the registry.
@@ -165,14 +163,14 @@ which is run by `atspi-client-initialize'."
 
 (atspi-define-signal event-focus focus
   nil nil
-  "focus" (&rest ignore)
+  "focus" ()
   "Call `atspi-focus-changed-hook' when a focus signal is received."
   (let ((service (dbus-event-service-name last-input-event))
 	(path (dbus-event-path-name last-input-event)))
     (let ((locus (assoc service atspi-locus-of-focus)))
       (if (not locus)
 	  (setq atspi-locus-of-focus
-		(append (list (cons service path)) atspi-locus-of-focus ))
+		(append (list (cons service path)) atspi-locus-of-focus))
 	(setcdr locus path)))
     (run-hook-with-args 'atspi-focus-changed-hook service path)))
 
@@ -289,28 +287,29 @@ For invocation see `atspi-call-tree-method'.")
 	  (message "No accessible name defined for %s%s" service path))
       name)))
 
-(defconst atspi-role-keywords
-  '(:invalid :accelerator-label :alert :animation :arrow :calendar :canvas
-    :check-box :check-menu-item :color-chooser :column-header :combo-box
-    :date-editor :desktop-icon :desktop-frame :dial :dialog :directory-pane
-    :drawing-area :file-chooser :filler :focus-traversable :font-chooser
-    :frame :glass-pane :html-container :icon :image :internal-frame :label
-    :layered-pane :list :list-item :menu :menu-bar :menu-item :option-pane
-    :page-tab :page-tab-list :panel :password-text :popup-menu :progress-bar
-    :push-button :radio-button :radio-menu-item :root-pane :row-header
-    :scroll-bar :scroll-pane :separator :slider :spin-button :split-pane
-    :status-bar :table :table-cell :table-column-header :table-row-header
-    :tearoff-menu-item :terminal :text :toggle-button :tool-bar :tool-tip
-    :tree :tree-table :unknown :viewport :window :extended :header :footer
-    :paragraph :ruler :application :autocomplete :editbar :embedded :entry
-    :chart :caption :document-frame :heading :page :section :redundant-object
-    :form :link :input-method-window)
-  "List of object roles.")
+(defconst atspi-roles
+  [invalid accelerator-label alert animation arrow calendar canvas check-box
+   check-menu-item color-chooser column-header combo-box date-editor
+   desktop-icon desktop-frame dial dialog directory-pane drawing-area
+   file-chooser filler focus-traversable font-chooser frame glass-pane
+   html-container icon image internal-frame label layered-pane list list-item
+   menu menu-bar menu-item option-pane page-tab page-tab-list panel
+   password-text popup-menu progress-bar push-button radio-button
+   radio-menu-item root-pane row-header scroll-bar scroll-pane separator
+   slider spin-button split-pane status-bar table table-cell
+   table-column-header table-row-header tearoff-menu-item terminal text
+   toggle-button tool-bar tool-tip tree tree-table unknown viewport window
+   extended header footer paragraph ruler application autocomplete editbar
+   embedded entry chart caption document-frame heading page section
+   redundant-object form link input-method-window]
+  "Object roles.")
 
 (defun atspi-decode-role (value)
   "Convert VALUE (a integer) to an AT-SPI object role (a symbol)."
   (check-type value integer)
-  (nth value atspi-role-keywords))
+  (if (or (< value 0) (>= value (length atspi-roles)))
+      (error "Role enumeration value out of bounds" value)
+    (aref atspi-roles value)))
 
 (defsubst atspi-tree-entry-get-role (tree-entry)
   "Return the role (a keyword) of the object described by TREE-ENTRY."
@@ -320,15 +319,14 @@ For invocation see `atspi-call-tree-method'.")
   "Return the description of the object described by TREE-ENTRY."
   (nth 6 tree-entry))
 
-(defconst atspi-state-keywords
-  '(:invalid :active :armed :busy :checked :collapsed :defunct :editable
-    :enabled :expandable :expanded :focusable :focused :has-tooltip
-    :horizontal :iconified :modal :multi-line :multiselectable :opaque
-    :pressed :resizable :selectable :selected :sensitive :showing :single-line
-    :stale :transient :vertical :visible :manages-descendants :indeterminate
-    :required :truncated :animated :invalid-entry :supports-autocompletion
-    :selectable-text :is-default :visited)
-  "List of object states.")
+(defconst atspi-states
+  [invalid active armed busy checked collapsed defunct editable enabled
+   expandable expanded focusable focused has-tooltip horizontal iconified
+   modal multi-line multiselectable opaque pressed resizable selectable
+   selected sensitive showing single-line stale transient vertical visible
+   manages-descendants indeterminate required truncated animated invalid-entry
+   supports-autocompletion selectable-text is-default visited]
+  "Object states.")
 
 (defun atspi-decode-state-bitfields (lower upper)
   "Decode LOWER and UPPER (32bit values) to a list of state keywords."
@@ -337,7 +335,7 @@ For invocation see `atspi-call-tree-method'.")
     (while (>= bit 0)
       (let ((amount (expt 2.0 bit)))
 	(if (>= lower amount)
-	    (setq stateset (cons (nth bit atspi-state-keywords) stateset)
+	    (setq stateset (cons (aref atspi-states bit) stateset)
 		  lower (- lower amount)))
 	(setq bit (1- bit))))
     stateset))
@@ -357,11 +355,10 @@ Optionally filter out those states not in ALLOWED."
 (mapcar (lambda (role)
 	  (eval
 	   `(defun ,(intern (concat "atspi-tree-entry-role-"
-				    (substring (symbol-name role) 1)
-				    "-p"))
+				    (symbol-name role) "-p"))
 	      (tree-entry)
 	      (eq (atspi-tree-entry-get-role tree-entry) ,role))))
-	atspi-role-keywords)
+	atspi-roles)
 
 (mapcar (lambda (interface)
 	  (eval
@@ -564,61 +561,62 @@ To invoke this interface use `%s'." suffix call-method))
 			       t)))
     (list service path)))
 
-(defconst atspi-relation-type-keywords
-  '(:null             ; Not a meaningful relationship; clients should not
-                      ; normally encounter this value.
-    :label-for        ; Object is a label for one or more other objects
-    :labelled-by      ; Object is labelled by one or more other objects.
-    :controller-for   ; Object is an interactive object which modifies the state,
-		      ; onscreen location, or other attributes of one or more
-		      ; target objects.
-    :controlled-by    ; Object state, position, etc. is modified/controlled by
-		      ; user interaction with one or more other objects. For
-		      ; instance a viewport or scroll pane may be :controlled-by
-		      ; scrollbars.
-    :member-of        ; Object has a grouping relationship (e.g. 'same group as')
-	  	      ; to one or more other objects.
-    :tooltip-for      ; Object is a tooltip associated with another object.
-    :node-child-of    ; Reserved for future use.
-    :extended         ; Used to indicate that a relationship exists, but its type
-                      ; is not specified in the enumeration and must be obtained
-                      ; via a call to getRelationTypeName.
-    :flows-to         ; Object renders content which flows logically to another
-                      ; object.  For instance, text in a paragraph may flow to
-                      ; another object which is not the        'next sibling' in
-                      ; the accessibility hierarchy.
-    :flows-from       ; Reciprocal of :flows-to
-    :subwindow-of     ; Object is visually and semantically considered a subwindow
-                      ; of another object, even though it is not the object's
-                      ; child.  Useful when dealing with embedded applications
-                      ; and other cases where the widget hierarchy does not map
-                      ; cleanly to the onscreen presentation.
-    :embeds           ; Similar to :subwindow-of, but specifically used for
-                      ; cross-process embedding.
-    :embedded-by      ; Reciprocal of :embeds; Used to denote content rendered
-                      ; by embedded renderers that live in a separate process
-                      ; space from the embedding context.
-    :popup-for        ; Denotes that the object is a transient window or frame
-                      ; associated with another onscreen object.  Similar to
-                      ; :tooltip-for, but more general.  Useful for windows which
-                      ; are technically toplevels but which, for one or more
-                      ; reasons, do not explicitly cause their associated window
-                      ; to lose 'window focus'.  Creation of a ROLE_WINDOW object
-                      ; with the :popup-for relation usually requires some
-                      ; presentation action on the part of assistive technology
-                      ; clients, even though the previous toplevel ROLE_FRAME
-                      ; object may still be the active window.
-    :parent-window-of ; This is the reciprocal relatipnship to :popup-for
-    :description-for  ; Indicates that an object provides descriptive
-                      ; information about another object; more verbose than
-                      ; :label-for
-    :described-by    ; Indicates that another object provides descriptive
-                     ; information about this object; more verbose than
-                     ; :labelled-by
-    )
-  "Specifies a relationship between objects (possibly one-to-many or many-to-one)
-outside of the normal parent/child hierarchical relationship.  It allows better
-semantic identification of how objects are associated with one another.
+(defconst atspi-relation-types
+  [null             ; Not a meaningful relationship; clients should not
+                    ; normally encounter this value.
+   label-for        ; Object is a label for one or more other objects
+   labelled-by      ; Object is labelled by one or more other objects.
+   controller-for   ; Object is an interactive object which modifies the
+                    ; state, onscreen location, or other attributes of one or
+                    ; more target objects.
+   controlled-by    ; Object state, position, etc. is modified/controlled by
+		    ; user interaction with one or more other objects. For
+		    ; instance a viewport or scroll pane may be :controlled-by
+		    ; scrollbars.
+   member-of        ; Object has a grouping relationship (e.g. 'same group as')
+	  	    ; to one or more other objects.
+   tooltip-for      ; Object is a tooltip associated with another object.
+   node-child-of    ; Reserved for future use.
+   extended         ; Used to indicate that a relationship exists, but its type
+                    ; is not specified in the enumeration and must be obtained
+                    ; via a call to getRelationTypeName.
+   flows-to         ; Object renders content which flows logically to another
+                    ; object.  For instance, text in a paragraph may flow to
+                    ; another object which is not the        'next sibling' in
+                    ; the accessibility hierarchy.
+   flows-from       ; Reciprocal of flows-to
+   subwindow-of     ; Object is visually and semantically considered a
+                    ; subwindow of another object, even though it is not the
+                    ; object's child.  Useful when dealing with embedded
+                    ; applications and other cases where the widget hierarchy
+                    ; does not map cleanly to the onscreen presentation.
+   embeds           ; Similar to :subwindow-of, but specifically used for
+                    ; cross-process embedding.
+   embedded-by      ; Reciprocal of :embeds; Used to denote content rendered
+                    ; by embedded renderers that live in a separate process
+                    ; space from the embedding context.
+   popup-for        ; Denotes that the object is a transient window or frame
+                    ; associated with another onscreen object.  Similar to
+                    ; :tooltip-for, but more general.  Useful for windows which
+                    ; are technically toplevels but which, for one or more
+                    ; reasons, do not explicitly cause their associated window
+                    ; to lose 'window focus'.  Creation of a ROLE_WINDOW object
+                    ; with the :popup-for relation usually requires some
+                    ; presentation action on the part of assistive technology
+                    ; clients, even though the previous toplevel ROLE_FRAME
+                    ; object may still be the active window.
+   parent-window-of ; This is the reciprocal relatipnship to :popup-for
+   description-for  ; Indicates that an object provides descriptive
+                    ; information about another object; more verbose than
+                    ; label-for
+   described-by     ; Indicates that another object provides descriptive
+                    ; information about this object; more verbose than
+                    ; labelled-by
+   ]
+  "Specifies a relationship between objects (possibly one-to-many or
+many-to-one) outside of the normal parent/child hierarchical relationship.  It
+allows better semantic identification of how objects are associated with one
+another.
 For instance the :labelled-by relationship may be used to identify labelling
 information that should accompany the accessibleName property when presenting
 an object's content or identity to the end user.  Similarly, :controller-for
@@ -628,12 +626,14 @@ with the valuator.  Common examples include association of scrollbars with the
 viewport or panel which they control.")
 
 (defun atspi-decode-relation-type (value)
+  "Convert VALUE (a integer) to a AT-SPI relation type (a symbol)."
   (check-type value integer)
-  (when (= value 0)
-    (display-warning
-     'atspi "Encountered :null (0) relation-type"
-     :error))
-  (nth value atspi-relation-type-keywords))
+  (if (or (< value 0) (>= value (length atspi-relation-types)))
+      (error "Relation type enumeration value out of bounds" value)
+    (when (= value 0)
+      (display-warning
+       'atspi "Encountered null relation type value" :warning))
+    (aref atspi-relation-types value)))
 
 (atspi-define-accessible-interface accessible "Accessible"
   (get-relation-set ()
@@ -874,7 +874,7 @@ Return t if the text content was successfully changed, nil otherwise."
 	(role (atspi-tree-entry-get-role tree-entry))
 	(path (atspi-tree-entry-get-path tree-entry)))
     (when (not (> (length name) 0)) (setq name nil))
-    (setq role (substring (symbol-name role) 1))
+    (setq role (symbol-name role))
     (list
      'tree-widget
      :tag (or name role)
