@@ -76,6 +76,7 @@ needs to be called at some point, possibly from
 
 (defcustom atspi-application-removed-hook nil
   "List of functions to call when an application is removed from the registry.
+Arguments passed are (SERVICE &rest TREE-ENTRIES).
 For this hook to fire `atspi-registry-register-update-applications-handler'
 needs to be called at some point, possibly from
 `atspi-client-initialisation-hook' which is run by `atspi-client-initialize'."
@@ -124,21 +125,25 @@ registered with D-Bus." 'dbus-register-signal handler)))
   atspi-service-registry atspi-path-registry
   "updateApplications" (what service)
   "Informs us WHAT has changed about SERVICE."
+  (check-type what (integer 0 1))
+  (check-type service string)
   (cond
-   ((= what 0)
-    (if (assoc service atspi-applications)
-	(display-warning
-	 'atspi (format "Add application request of already known service %s"
-			service)
-	 :warning)
-      (run-hook-with-args 'atspi-application-added-hook service)))
    ((= what 1)
-    (if (not (assoc service atspi-applications))
-	(display-warning
-	 'atspi (format "Remove application request of unkown service %s"
-			service)
-	 :warning)
-      (run-hook-with-args 'atspi-application-removed-hook service)))))
+    (when (assoc service atspi-applications)
+      (display-warning
+       'atspi (format "Add application request of already known service %s"
+		      service)
+       :warning))
+    (run-hook-with-args 'atspi-application-added-hook service))
+   ((= what 0)
+    (let ((tree (assoc service atspi-applications)))
+      (if (not tree)
+	  (display-warning
+	   'atspi (format "Remove application request of unkown service %s"
+			  service)
+	   :warning)
+	(setq atspi-applications (delq tree atspi-applications))
+	(apply #'run-hook-with-args 'atspi-application-removed-hook tree))))))
 
 (defcustom atspi-focus-changed-hook nil
   "List of functions to call when focus has changed.
@@ -428,7 +433,7 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
       (let ((tree (assoc service atspi-applications)))
 	(if (not tree)
 	    (setq atspi-applications
-		  (append (list (list service tree-entry)) atspi-applications))
+		  (nconc (list (list service tree-entry)) atspi-applications))
 	  (let ((path (atspi-tree-entry-get-path tree-entry))
 		(tree-entries (cdr tree)) (found nil))
 	    (while tree-entries
@@ -439,7 +444,7 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
 		    (setq tree-entries nil found t))
 		(setq tree-entries (cdr tree-entries))))
 	    (unless found
-	      (setcdr tree (append (cdr tree) (list tree-entry))))))))
+	      (setcdr tree (nconc (cdr tree) (list tree-entry))))))))
     (if (not old-tree-entry)
 	(run-hook-with-args
 	 'atspi-accessible-added-hook service tree-entry)
