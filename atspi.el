@@ -559,11 +559,85 @@ To invoke this interface use `%s'." suffix call-method))
 			       t)))
     (list service path)))
 
+(defconst atspi-relation-type-keywords
+  '(:null             ; Not a meaningful relationship; clients should not
+                      ; normally encounter this value.
+    :label-for        ; Object is a label for one or more other objects
+    :labelled-by      ; Object is labelled by one or more other objects.
+    :controller-for   ; Object is an interactive object which modifies the state,
+		      ; onscreen location, or other attributes of one or more
+		      ; target objects.
+    :controlled-by    ; Object state, position, etc. is modified/controlled by
+		      ; user interaction with one or more other objects. For
+		      ; instance a viewport or scroll pane may be :controlled-by
+		      ; scrollbars.
+    :member-of        ; Object has a grouping relationship (e.g. 'same group as')
+	  	      ; to one or more other objects.
+    :tooltip-for      ; Object is a tooltip associated with another object.
+    :node-child-of    ; Reserved for future use.
+    :extended         ; Used to indicate that a relationship exists, but its type
+                      ; is not specified in the enumeration and must be obtained
+                      ; via a call to getRelationTypeName.
+    :flows-to         ; Object renders content which flows logically to another
+                      ; object.  For instance, text in a paragraph may flow to
+                      ; another object which is not the        'next sibling' in
+                      ; the accessibility hierarchy.
+    :flows-from       ; Reciprocal of :flows-to
+    :subwindow-of     ; Object is visually and semantically considered a subwindow
+                      ; of another object, even though it is not the object's
+                      ; child.  Useful when dealing with embedded applications
+                      ; and other cases where the widget hierarchy does not map
+                      ; cleanly to the onscreen presentation.
+    :embeds           ; Similar to :subwindow-of, but specifically used for
+                      ; cross-process embedding.
+    :embedded-by      ; Reciprocal of :embeds; Used to denote content rendered
+                      ; by embedded renderers that live in a separate process
+                      ; space from the embedding context.
+    :popup-for        ; Denotes that the object is a transient window or frame
+                      ; associated with another onscreen object.  Similar to
+                      ; :tooltip-for, but more general.  Useful for windows which
+                      ; are technically toplevels but which, for one or more
+                      ; reasons, do not explicitly cause their associated window
+                      ; to lose 'window focus'.  Creation of a ROLE_WINDOW object
+                      ; with the :popup-for relation usually requires some
+                      ; presentation action on the part of assistive technology
+                      ; clients, even though the previous toplevel ROLE_FRAME
+                      ; object may still be the active window.
+    :parent-window-of ; This is the reciprocal relatipnship to :popup-for
+    :description-for  ; Indicates that an object provides descriptive
+                      ; information about another object; more verbose than
+                      ; :label-for
+    :described-by    ; Indicates that another object provides descriptive
+                     ; information about this object; more verbose than
+                     ; :labelled-by
+    )
+  "Specifies a relationship between objects (possibly one-to-many or many-to-one)
+outside of the normal parent/child hierarchical relationship.  It allows better
+semantic identification of how objects are associated with one another.
+For instance the :labelled-by relationship may be used to identify labelling
+information that should accompany the accessibleName property when presenting
+an object's content or identity to the end user.  Similarly, :controller-for
+can be used to further specify the context in which a valuator is useful,
+and/or the other UI components which are directly effected by user interactions
+with the valuator.  Common examples include association of scrollbars with the
+viewport or panel which they control.")
+
+(defun atspi-decode-relation-type (value)
+  (check-type value integer)
+  (when (= value 0)
+    (display-warning
+     'atspi "Encountered :null (0) relation-type"
+     :error))
+  (nth value atspi-relation-type-keywords))
+
 (atspi-define-accessible-interface accessible "Accessible"
   (get-relation-set ()
     "Get a set defining the relationship of accessible object PATH of SERVICE
 to other accessible objects."
-    (call-method "getRelationSet"))
+    (mapcar (lambda (relation)
+	      (cons (atspi-decode-relation-type (car relation))
+		    (cadr relation)))
+	    (call-method "getRelationSet")))
   (get-states ()
     "Get the current state of accessible object SERVICE PATH via D-Bus."
     (apply #'atspi-decode-state-bitfields (call-method "getState")))
