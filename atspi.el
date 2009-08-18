@@ -1,4 +1,4 @@
-;;; atspi.el --- Assistive Technology Servvce Provider Interface for Emacs
+;;; atspi.el --- Assistive Technology Service Provider Interface for Emacs
 
 ;; Copyright (C) 2009  Mario Lang
 
@@ -29,28 +29,35 @@
 (require 'dbus)
 (require 'warnings)
 
-(defconst atspi-prefix "org.freedesktop.atspi."
-  "Common prefix for AT-SPI D-Bus service and interface names.")
-
 (defgroup atspi nil
   "Assistive technology service provider interface."
   :group 'external)
 
-;;;; Assistive technologies registry
+(defun atspi-debug (message &rest args)
+  (let ((warning-minimum-log-level :debug)
+	(warning-fill-prefix "  "))
+    (display-warning 'atspi (apply #'format message args)
+		     :debug "*AT-SPI Debug*")))
+
+(defconst atspi-prefix "org.freedesktop.atspi."
+  "Common prefix for AT-SPI D-Bus service and interface names.")
 
 (defconst atspi-service-registry (concat atspi-prefix "Registry")
   "The AT-SPI Registry D-Bus service name.
-For invocation of methods on this interface see `atspi-call-registry-method'.")
+For invocation of methods of this interface see `atspi-call-registry-method'.")
 
 (defun atspi-available-p ()
   "Return non-nil if AT-SPI is available (the registry daemon is running)."
   (member atspi-service-registry (dbus-list-names :session)))
 
-(defconst atspi-path-registry "/org/freedesktop/atspi/registry"
+(defconst atspi-path-prefix "/org/freedesktop/atspi/"
+  "Common prefix for AT-SPI D-Bus path names.")
+
+(defconst atspi-path-registry (concat atspi-path-prefix "registry")
   "The D-Bus path of the AT-SPI registry.")
 
 (defconst atspi-interface-registry atspi-service-registry
-  "The AT-SPI Registry D-Bus interface name.")
+  "The AT-SPI D-Bus registry interface name.")
 
 (defun atspi-call-registry-method (method &rest args)
   "Call `atspi-interface-registry' METHOD with ARGS."
@@ -59,22 +66,23 @@ For invocation of methods on this interface see `atspi-call-registry-method'.")
 	 atspi-path-registry atspi-interface-registry method args))
 
 (defun atspi-registry-get-applications ()
-  "Gets all the currently registered applications.
+  "Retrieve a list of all the currently registered applications.
 Return a list of D-Bus service names."
   (dbus-ignore-errors (atspi-call-registry-method "getApplications")))
 
-(defcustom atspi-application-added-hook '(atspi-define-action-commands)
+(defcustom atspi-application-added-hook nil
   "List of functions to call when a new application was added to the registry.
 The D-Bus service name of the newly added application is passed as an argument.
 For this hook to fire `atspi-registry-register-update-applications-handler'
 needs to be called at some point, possibly from
 `atspi-client-initialisation-hook' which is run by `atspi-client-initialize'."
-  :type 'hook
-  :options '(atspi-define-action-commands))
+  :type 'hook)
 
 (defcustom atspi-application-removed-hook nil
-  "List of functions to call when an application is removed from the registry.
-Arguments passed are (SERVICE &rest TREE-ENTRIES).
+  "List of functions to call when an application was removed from the registry.
+The first argument is the D-Bus service name of the application removed,
+and the remaining arguments are the accessible objects just removed from
+`atspi-cache'.
 For this hook to fire `atspi-registry-register-update-applications-handler'
 needs to be called at some point, possibly from
 `atspi-client-initialisation-hook' which is run by `atspi-client-initialize'."
@@ -119,52 +127,55 @@ registered with D-Bus." 'dbus-register-signal handler)))
 	       (dbus-register-signal
 		:session ,service ,path ,interface ,signal #',handler))))))
 
-(defvar atspi-applications nil
+(defvar atspi-cache nil
   "AT-SPI object cache.
 An alist where the car of each element is the D-Bus service name of the
-application and the cdr is a list of object information.")
+application and the cdr is what `atspi-tree-get-tree' would return.")
 
 (defconst atspi-interface-tree (concat atspi-prefix "Tree")
   "Tree of accessible objects D-Bus interface name.
 For invocation see `atspi-call-tree-method'.")
 
-(defconst atspi-path-tree "/org/freedesktop/atspi/tree"
-  "The D-Bus path to talk to `atspi-interface-tree'.")
+(defconst atspi-path-tree (concat atspi-path-prefix "tree")
+  "The D-Bus path to `atspi-interface-tree'.")
 
 (defun atspi-call-tree-method (service method &rest args)
-  "On SERVICE call `atspi-interface-tree' METHOD with ARGS."
+  "On SERVICE call `atspi-interface-tree' METHOD with ARGS.
+See also `atspi-tree-get-tree' for more specialised versions of this function."
   (check-type service string)
   (check-type method string)
   (apply #'dbus-call-method :session service atspi-path-tree
 	 atspi-interface-tree method args))
 
 (defun atspi-tree-get-tree (service)
-  "Transfers information about all accessible objects of SERVICE."
+  "Transfers information about all accessible objects of SERVICE.
+Returns a list of accessible objects.  Each element is of the form
+ (PATH PARENT CHILDREN INTERFACES NAME ROLE DESCRIPTION STATE)."
   (atspi-call-tree-method service "getTree"))
 
 (defsubst atspi-tree-entry-get-path (tree-entry)
   "Return the D-Bus path of the accessible object described by TREE-ENTRY."
-  (nth 0 tree-entry))
+  (car tree-entry))
 
-(defun atspi-tree-get-entry (service path)
+(defun atspi-cache-get (service path)
   "Return the cache entry describing accessible of SERVICE located at PATH."
-  (find path (cdr (or (assoc service (atspi-applications))
-		      (assoc service (atspi-applications t))))
+  (find path (cdr (or (assoc service (atspi-cache))
+		      (assoc service (atspi-cache t))))
 	:test #'string= :key #'atspi-tree-entry-get-path))
 
 (defsubst atspi-tree-entry-get-parent (tree-entry)
-  "Return the D-Bus path of the parent of the object described by TREE-ENTRY."
+  "Return the D-Bus path of the parent of accessible described by TREE-ENTRY."
   (nth 1 tree-entry))
 
 (defun atspi-accessible-parent-path (service path)
-  (atspi-tree-entry-get-parent (atspi-tree-get-entry service path)))
+  (atspi-tree-entry-get-parent (atspi-cache-get service path)))
 
 (defsubst atspi-tree-entry-get-children (tree-entry)
   "Return a list of D-Bus paths of the children of this TREE-ENTRY."
   (nth 2 tree-entry))
 
 (defun atspi-list-children-paths (service path)
-  (atspi-tree-entry-get-children (atspi-tree-get-entry service path)))
+  (atspi-tree-entry-get-children (atspi-cache-get service path)))
 
 (defun atspi-child-count (service path)
   (length (atspi-list-children-paths service path)))
@@ -174,7 +185,7 @@ For invocation see `atspi-call-tree-method'.")
   (nth 3 tree-entry))
 
 (defun atspi-list-accessible-interface-names (service path)
-  (atspi-tree-entry-get-interface-names (atspi-tree-get-entry service path)))
+  (atspi-tree-entry-get-interface-names (atspi-cache-get service path)))
 
 (defsubst atspi-tree-entry-get-name (tree-entry)
   "Return the name (if any) of the accessible object described by TREE-ENTRY."
@@ -182,12 +193,12 @@ For invocation see `atspi-call-tree-method'.")
 
 (defun atspi-accessible-name (service path)
   (interactive
-   (let ((service (completing-read "Service: " (atspi-applications t) nil t)))
+   (let ((service (completing-read "Service: " (atspi-cache t) nil t)))
      (list service
 	   (completing-read "Path: "
-			    (cdr (assoc service (atspi-applications)))
+			    (cdr (assoc service (atspi-cache)))
 			    nil t))))
-  (let ((name (atspi-tree-entry-get-name (atspi-tree-get-entry service path))))
+  (let ((name (atspi-tree-entry-get-name (atspi-cache-get service path))))
     (if (interactive-p)
 	(if (> (length name) 0)
 	    (message "Accessible name of %s%s is \"%s\"" service path name)
@@ -252,12 +263,11 @@ For invocation see `atspi-call-tree-method'.")
 Optionally filter out those states not in ALLOWED."
   (let ((states (apply #'atspi-decode-state-bitfields (nth 7 tree-entry))))
     (if allowed
-	(remove-if-not (lambda (state) (member state allowed)) states)
+	(remove-if-not (lambda (state) (memq state allowed)) states)
       states)))
 
 (defun atspi-accessible-states (service path &rest allowed)
-  (apply #'atspi-tree-entry-get-states
-	 (atspi-tree-get-entry service path) allowed))
+  (apply #'atspi-tree-entry-get-states (atspi-cache-get service path) allowed))
 
 (mapcar (lambda (role)
 	  (eval
@@ -290,15 +300,10 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
   :type 'hook
   :options '(atspi-log-cache-update))
 
-(defun atspi-debug (message &rest args)
-  (let ((warning-minimum-log-level :debug)
-	(warning-fill-prefix "  "))
-    (display-warning 'atspi (apply #'format message args)
-		     :debug "*AT-SPI Debug*")))
-
 (defun atspi-log-cache-addition (service tree-entry)
   (let ((path (atspi-tree-entry-get-path tree-entry)))
-    (atspi-debug "New accessible object %s%s" service path)))
+    (atspi-debug "New %s object %s%s" (atspi-tree-entry-get-role tree-entry)
+		 service path)))
 
 (defun atspi-log-cache-update (service old-entry new-entry)
   (macrolet ((compare-cache-value (accessor comparator &rest body)
@@ -332,12 +337,12 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
   nil atspi-path-tree "updateAccessible" (tree-entry)
   (let ((service (dbus-event-service-name last-input-event))
 	(old-tree-entry nil))
-    (if (not atspi-applications)
-	(setq atspi-applications (list (list service tree-entry)))
-      (let ((tree (assoc service atspi-applications)))
+    (if (not atspi-cache)
+	(setq atspi-cache (list (list service tree-entry)))
+      (let ((tree (assoc service atspi-cache)))
 	(if (not tree)
-	    (setq atspi-applications
-		  (nconc (list (list service tree-entry)) atspi-applications))
+	    (setq atspi-cache
+		  (nconc (list (list service tree-entry)) atspi-cache))
 	  (let ((path (atspi-tree-entry-get-path tree-entry))
 		(tree-entries (cdr tree)) (found nil))
 	    (while tree-entries
@@ -354,32 +359,32 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
 	 'atspi-accessible-added-hook service tree-entry)
       (if (equal old-tree-entry tree-entry)
 	  (display-warning
-	   'atspi (format "Cache update with apparently equal data %S"
-			  tree-entry)
-	   :warning)
+	   'atspi (format "Ignoring cache update with equal data on %s%s"
+			  service (atspi-tree-entry-get-path tree-entry))
+	   :debug)
 	(run-hook-with-args
 	 'atspi-accessible-updated-hook service old-tree-entry tree-entry)))))
 
 (defun atspi-log-cache-removal (service tree-entry)
-  (atspi-debug "Cache removal of %s:%S" service tree-entry))
+  (atspi-debug "Cache removal of %s: %S" service tree-entry))
 
 (defcustom atspi-accessible-before-remove-hook '(atspi-log-cache-removal)
   "List of functions to call before a certain tree-entry is removed from
-`atspi-applications'.
+`atspi-cache'.
 Arguments passed are (SERVICE TREE-ENTRY)."
   :type 'hook
   :options '(atspi-log-cache-removal))
 
 (defcustom atspi-accessible-after-remove-hook nil
   "List of functions to call once a certain accessible object has been removed
-from `atspi-applications'.
+from `atspi-cache'.
 Arguments passed are (SERVICE PATH)."
   :type 'hook)
 
 (atspi-define-signal tree remove-accessible
   nil atspi-path-tree "removeAccessible" (path)
   (let ((service (dbus-event-service-name last-input-event)))
-    (let ((tree (assoc service atspi-applications)))
+    (let ((tree (assoc service atspi-cache)))
       (if (not tree)
 	  (display-warning
 	   'atspi (format "Cache removal request for unknown service %s"
@@ -412,10 +417,10 @@ Arguments passed are (SERVICE PATH)."
    :session application
    "/org/freedesktop/atspi/tree" "org.freedesktop.atspi.Tree" "getRoot"))
 
-(defun atspi-applications (&optional reload)
-  (if (and atspi-applications (not reload))
-      atspi-applications
-    (setq atspi-applications
+(defun atspi-cache (&optional reload)
+  (if (and atspi-cache (not reload))
+      atspi-cache
+    (setq atspi-cache
 	  (mapcar (lambda (service)
 		    (cons service (atspi-tree-get-tree service)))
 		  (atspi-registry-get-applications)))))
@@ -428,20 +433,20 @@ Arguments passed are (SERVICE PATH)."
   (check-type service string)
   (cond
    ((= what 1)
-    (when (assoc service atspi-applications)
+    (when (assoc service atspi-cache)
       (display-warning
        'atspi (format "Add application request of already known service %s"
 		      service)
        :warning))
     (run-hook-with-args 'atspi-application-added-hook service))
    ((= what 0)
-    (let ((tree (assoc service atspi-applications)))
+    (let ((tree (assoc service atspi-cache)))
       (if (not tree)
 	  (display-warning
 	   'atspi (format "Remove application request of unkown service %s"
 			  service)
 	   :warning)
-	(setq atspi-applications (delq tree atspi-applications))
+	(setq atspi-cache (delq tree atspi-cache))
 	(apply #'run-hook-with-args 'atspi-application-removed-hook tree))))))
 
 (defcustom atspi-focus-changed-hook nil
@@ -663,7 +668,7 @@ the application.
 Ordinarily clients should be toolkit-agnostic, dependencies on this property
 should be avoided where possible."
   (check-type service string)
-  (unless path (setq path "/org/freedesktop/atspi/accessible"))
+  (unless path (setq path (concat atspi-path-prefix "accessible")))
   (check-type path string)
   (unless (atspi-interface-implemented-p
 	   service path atspi-interface-application)
@@ -831,13 +836,14 @@ Return t if the text content was successfully changed, nil otherwise."
 		 (atspi-action-do-action ,service ,object-path action)))))))))
 
 (defun atspi-focus-changed-echo-function (service path)
-  (let ((tree-entry (atspi-tree-get-entry service path)))
+  (let ((tree-entry (atspi-cache-get service path)))
     (when tree-entry
       (let ((role (atspi-tree-entry-get-role tree-entry))
-	    (name (atspi-tree-entry-get-name tree-entry))
-	    (children (atspi-tree-entry-get-description tree-entry))
+	    (named-path (atspi-tree-entry-named-path
+			 tree-entry (cdr (assoc service atspi-cache))))
+	    (children (atspi-tree-entry-get-children tree-entry))
 	    (description (atspi-tree-entry-get-description tree-entry)))
-	(message (format "Focus now on a %s" role))))))
+	(message (format "Focus now on %s (a %s)" named-path role))))))
   
 (defun espeak (string)
   (let ((proc (start-process "espeak" nil "espeak")))
@@ -864,10 +870,10 @@ Return t if the text content was successfully changed, nil otherwise."
 (defun atspi-widget-expander (widget)
   (let ((service (widget-get widget :service)))
     (mapcar (lambda (path)
-	      (let ((entry (atspi-tree-get-entry service path)))
+	      (let ((entry (atspi-cache-get service path)))
 		(atspi-tree-entry-to-widget service entry)))
 	    (atspi-tree-entry-get-children
-	     (atspi-widget-apply widget #'atspi-tree-get-entry)))))
+	     (atspi-widget-apply widget #'atspi-cache-get)))))
 (defun atspi-tree-entry-to-widget (service tree-entry)
   (let ((children (atspi-tree-entry-get-children tree-entry))
 	(name (atspi-tree-entry-get-name tree-entry))
