@@ -464,7 +464,7 @@ For this hook to work `atspi-client-mode' needs to be enabled."
 
 (atspi-define-signal event-focus focus
   nil nil
-  "focus" ()
+  "focus" (&rest ignore)
   "Call `atspi-focus-changed-hook' when a focus signal is received."
   (let ((service (dbus-event-service-name last-input-event))
 	(path (dbus-event-path-name last-input-event)))
@@ -838,7 +838,9 @@ Return t if the text content was successfully changed, nil otherwise."
 			 tree-entry (cdr (assoc service atspi-cache))))
 	    (children (atspi-tree-entry-get-children tree-entry))
 	    (description (atspi-tree-entry-get-description tree-entry)))
-	(message (format "Focus now on %s (a %s)" named-path role))))))
+	(message (format "Focus now on %s (a %s)"
+			 (mapconcat #'atspi-tree-entry-get-name named-path "/")
+			 role))))))
   
 (defun espeak (string)
   (let ((proc (start-process "espeak" nil "espeak")))
