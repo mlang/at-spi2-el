@@ -125,8 +125,9 @@ registered with D-Bus." 'dbus-register-signal handler)))
 	       (dbus-register-signal
 		:session ,service ,path ,interface ,signal #',handler))))))
 
-(defvar atspi-cache nil
+(defvar atspi-cache (make-hash-table :test 'equal)
   "AT-SPI object cache.
+A hash-table of hash-tables.
 An alist where the car of each element is the D-Bus service name of the
 application and the cdr is what `atspi-tree-get-tree' would return.")
 
@@ -157,9 +158,9 @@ Returns a list of accessible objects.  Each element is of the form
 
 (defun atspi-cache-get (service path)
   "Return the cache entry describing accessible of SERVICE located at PATH."
-  (find path (cdr (or (assoc service (atspi-cache))
-		      (assoc service (atspi-cache t))))
-	:test #'string= :key #'atspi-tree-entry-get-path))
+  (let ((table (gethash service atspi-cache)))
+    (when table
+      (gethash path table))))
 
 (defsubst atspi-tree-entry-get-parent (tree-entry)
   "Return the D-Bus path of the parent of accessible described by TREE-ENTRY."
@@ -333,32 +334,22 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
 
 (atspi-define-signal tree update-accessible
   nil atspi-path-tree "updateAccessible" (tree-entry)
-  (let ((service (dbus-event-service-name last-input-event))
-	(old-tree-entry nil))
-    (if (not atspi-cache)
-	(setq atspi-cache (list (list service tree-entry)))
-      (let ((tree (assoc service atspi-cache)))
-	(if (not tree)
-	    (setq atspi-cache
-		  (nconc (list (list service tree-entry)) atspi-cache))
-	  (let ((path (atspi-tree-entry-get-path tree-entry))
-		(tree-entries (cdr tree)) (found nil))
-	    (while tree-entries
-	      (if (string= (atspi-tree-entry-get-path (car tree-entries)) path)
-		  (progn
-		    (setq old-tree-entry (car tree-entries))
-		    (setcar tree-entries tree-entry)
-		    (setq tree-entries nil found t))
-		(setq tree-entries (cdr tree-entries))))
-	    (unless found
-	      (setcdr tree (nconc (cdr tree) (list tree-entry))))))))
+  (let* ((service (dbus-event-service-name last-input-event))
+	 (path (atspi-tree-entry-get-path tree-entry))
+	 (table (gethash service atspi-cache)) old-tree-entry)
+    (if (not table)
+	(puthash service
+		 (let ((subtable (make-hash-table :test 'equal)))
+		   (puthash path tree-entry subtable) subtable) atspi-cache)
+      (setq old-tree-entry (gethash path table))
+      (puthash path tree-entry table))
     (if (not old-tree-entry)
 	(run-hook-with-args
 	 'atspi-accessible-added-hook service tree-entry)
       (if (equal old-tree-entry tree-entry)
 	  (display-warning
 	   'atspi (format "Ignoring cache update with equal data on %s%s"
-			  service (atspi-tree-entry-get-path tree-entry))
+			  service path)
 	   :debug)
 	(run-hook-with-args
 	 'atspi-accessible-updated-hook service old-tree-entry tree-entry)))))
@@ -366,44 +357,31 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
 (defun atspi-log-cache-removal (service tree-entry)
   (atspi-debug "Cache removal of %s: %S" service tree-entry))
 
-(defcustom atspi-accessible-before-remove-hook '(atspi-log-cache-removal)
+(defcustom atspi-accessible-removed-hook '(atspi-log-cache-removal)
   "List of functions to call before a certain tree-entry is removed from
 `atspi-cache'.
 Arguments passed are (SERVICE TREE-ENTRY)."
   :type 'hook
   :options '(atspi-log-cache-removal))
 
-(defcustom atspi-accessible-after-remove-hook nil
-  "List of functions to call once a certain accessible object has been removed
-from `atspi-cache'.
-Arguments passed are (SERVICE PATH)."
-  :type 'hook)
-
 (atspi-define-signal tree remove-accessible
   nil atspi-path-tree "removeAccessible" (path)
   (let ((service (dbus-event-service-name last-input-event)))
-    (let ((tree (assoc service atspi-cache)))
-      (if (not tree)
+    (let ((table (gethash service atspi-cache)))
+      (if (not table)
 	  (display-warning
 	   'atspi (format "Cache removal request for unknown service %s"
 			  service)
 	   :warning)
-	(let ((head tree))
-	  (while (cdr head)
-	    (let ((item (cadr head)))
-	      (if (not (string= (atspi-tree-entry-get-path item) path))
-		  (setq head (cdr head))
-		(run-hook-with-args
-		 'atspi-accessible-before-remove-hook service item)
-		(setcdr head (cddr head))
-		(setq head nil)
-		(run-hook-with-args
-		 'atspi-accessible-after-remove-hook service path))))
-	  (when head
-	    (display-warning
-	     'atspi (format "Removal request for unknown object %s%s"
-			    service path)
-	     :error)))))))
+	(let ((tree-entry (gethash path table)))
+	  (if (not tree-entry)
+	      (display-warning
+	       'atspi (format "Removal request for unknown object %s%s"
+			      service path)
+	       :warning)
+	    (remhash path table)
+	    (run-hook-with-args
+	     'atspi-accessible-removed-hook service tree-entry)))))))
 
 (defun atspi-get-application-path (service)
   (dbus-call-method
@@ -431,21 +409,21 @@ Arguments passed are (SERVICE PATH)."
   (check-type service string)
   (cond
    ((= what 1)
-    (when (assoc service atspi-cache)
+    (when (gethash service atspi-cache)
       (display-warning
        'atspi (format "Add application request of already known service %s"
 		      service)
        :warning))
     (run-hook-with-args 'atspi-application-added-hook service))
    ((= what 0)
-    (let ((tree (assoc service atspi-cache)))
-      (if (not tree)
+    (let ((table (gethash service atspi-cache)))
+      (if (not table)
 	  (display-warning
 	   'atspi (format "Remove application request of unkown service %s"
 			  service)
 	   :warning)
-	(setq atspi-cache (delq tree atspi-cache))
-	(apply #'run-hook-with-args 'atspi-application-removed-hook tree))))))
+	(remhash service atspi-cache)
+	(run-hook-with-args 'atspi-application-removed-hook table))))))
 
 (defcustom atspi-focus-changed-hook nil
   "List of functions to call when focus has changed.
@@ -798,18 +776,18 @@ Return t if the text content was successfully changed, nil otherwise."
   (check-type path string)
   (find path tree :key #'atspi-tree-entry-get-path :test #'string=))
 
-(defun atspi-tree-entry-get-all-parents (tree-entry tree)
+(defun atspi-tree-entry-get-all-parents (service tree-entry)
   (let ((path ()))
     (while tree-entry
       (setq path (cons tree-entry path)
-	    tree-entry (atspi-tree-find-entry
-			tree (atspi-tree-entry-get-parent tree-entry))))
+	    tree-entry (atspi-cache-get
+			service (atspi-tree-entry-get-parent tree-entry))))
     path))
 
-(defun atspi-tree-entry-named-path (tree-entry tree)
+(defun atspi-tree-entry-named-path (service tree-entry)
   (remove-if-not (lambda (entry)
 		   (> (length (atspi-tree-entry-get-name entry)) 0))
-		 (atspi-tree-entry-get-all-parents tree-entry tree)))
+		 (atspi-tree-entry-get-all-parents service tree-entry)))
 
 (defun atspi-define-action-commands (service)
   (interactive (list (completing-read "Service: "
@@ -834,11 +812,10 @@ Return t if the text content was successfully changed, nil otherwise."
   (let ((tree-entry (atspi-cache-get service path)))
     (when tree-entry
       (let ((role (atspi-tree-entry-get-role tree-entry))
-	    (named-path (atspi-tree-entry-named-path
-			 tree-entry (cdr (assoc service atspi-cache))))
+	    (named-path (atspi-tree-entry-named-path service tree-entry))
 	    (children (atspi-tree-entry-get-children tree-entry))
 	    (description (atspi-tree-entry-get-description tree-entry)))
-	(message (format "Focus now on %s (a %s)"
+	(message (format "Focus now on %s (role %s)"
 			 (mapconcat #'atspi-tree-entry-get-name named-path "/")
 			 role))))))
   
