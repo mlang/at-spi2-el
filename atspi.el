@@ -73,20 +73,18 @@ Return a list of D-Bus service names."
 (defcustom atspi-application-added-hook nil
   "List of functions to call when a new application was added to the registry.
 The D-Bus service name of the newly added application is passed as an argument.
-For this hook to fire `atspi-registry-register-update-applications-handler'
-needs to be called at some point, possibly from
-`atspi-client-initialisation-hook' which is run by `atspi-client-initialize'."
-  :type 'hook)
+For this hook to work `atspi-client-mode' needs to be enabled."
+  :type 'hook
+  :link '(function-link atspi-registry-register-update-applications-handler))
 
 (defcustom atspi-application-removed-hook nil
   "List of functions to call when an application was removed from the registry.
 The first argument is the D-Bus service name of the application removed,
 and the remaining arguments are the accessible objects just removed from
 `atspi-cache'.
-For this hook to fire `atspi-registry-register-update-applications-handler'
-needs to be called at some point, possibly from
-`atspi-client-initialisation-hook' which is run by `atspi-client-initialize'."
-  :type 'hook)
+For this hook to work `atspi-client-mode' needs to be enabled."
+  :type 'hook
+  :link '(function-link atspi-registry-register-update-applications-handler))
 
 (defun atspi-fill-docstring (column string)
   "Utility function to refill docstrings."
@@ -453,13 +451,10 @@ Arguments passed are (SERVICE PATH)."
   "List of functions to call when focus has changed.
 Arguments passed are SERVICE and PATH of the accessible object that just
 received focus.
-For this hook to fire `atspi-event-focus-register-focus-handler' needs to be
-called at some point, possibly from `atspi-client-initialisation-hook'
-which is run by `atspi-client-initialize'."
+For this hook to work `atspi-client-mode' needs to be enabled."
   :type 'hook
   :options '(atspi-focus-changed-echo-function)
-  :link '(function-link atspi-client-initialize)
-  :link '(variable-link atspi-client-initialisation-hook)
+  :link '(function-link atspi-client-mode)
   :link '(function-link atspi-event-focus-register-focus-handler))
 
 (defconst atspi-interface-event-focus (concat atspi-prefix "Event.Focus")
@@ -913,27 +908,24 @@ Return t if the text content was successfully changed, nil otherwise."
 	  (widget-create 'atspi-service :tag service :service service))
 	(atspi-registry-get-applications)))
 
-;;;; Client Initialisation
-
-(defcustom atspi-client-initialisation-hook
-  '(atspi-registry-register-update-applications-handler
-    atspi-tree-register-update-accessible-handler
-    atspi-tree-register-remove-accessible-handler
-    atspi-event-focus-register-focus-handler)
-  "List of functions to call upon at-spi client initialisation."
-  :type 'hook
-  :options '(atspi-registry-register-update-applications-handler
-	     atspi-tree-register-update-accessible-handler
-	     atspi-tree-register-remove-accessible-handler
-	     atspi-event-focus-register-focus-handler))
-
-(defun atspi-client-initialize ()
-  "Initialize signal handlers."
-  (interactive)
-  (if (not (atspi-available-p))
-      (error "AT-SPI is not available.")
-    (run-hooks 'atspi-client-initialisation-hook)
-    t))
+(define-minor-mode atspi-client-mode
+  "Assistive technology client mode."
+  :global t :group 'atspi :require 'atspi :lighter " AT"
+  (if atspi-client-mode
+      (if (not (atspi-available-p))
+	  (error "The AT-SPI registry is not available.")
+	(atspi-registry-register-update-applications-handler)
+	(atspi-tree-register-update-accessible-handler)
+	(atspi-tree-register-remove-accessible-handler)
+	(atspi-event-focus-register-focus-handler)
+	(atspi-event-window-register-activate-handler)
+	(atspi-event-window-register-deactivate-handler))
+    (atspi-registry-unregister-update-applications-handler)
+    (atspi-tree-unregister-update-accessible-handler)
+    (atspi-tree-unregister-remove-accessible-handler)
+    (atspi-event-focus-unregister-focus-handler)
+    (atspi-event-window-unregister-activate-handler)
+    (atspi-event-window-unregister-deactivate-handler)))
 
 (provide 'atspi)
 ;;; atspi.el ends here
