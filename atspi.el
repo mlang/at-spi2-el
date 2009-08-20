@@ -174,38 +174,56 @@ Returns a list of accessible objects.  Each element is of the form
   "Return the D-Bus path of the parent of accessible described by TREE-ENTRY."
   (nth 1 tree-entry))
 
-(defun atspi-accessible-parent-path (service path)
-  (atspi-tree-entry-get-parent (atspi-cache-get service path)))
+(defun atspi-accessible-parent (service path)
+  (if atspi-cache-mode
+      (atspi-tree-entry-get-parent (atspi-cache-get service path))
+    (atspi-get-property service path atspi-interface-accessible "parent")))
 
 (defsubst atspi-tree-entry-get-children (tree-entry)
   "Return a list of D-Bus paths of the children of this TREE-ENTRY."
   (nth 2 tree-entry))
 
-(defun atspi-list-children-paths (service path)
-  (atspi-tree-entry-get-children (atspi-cache-get service path)))
+(defun atspi-accessible-children (service path)
+  (if atspi-cache-mode
+      (atspi-tree-entry-get-children (atspi-cache-get service path))
+    (let ((count )
+	  children)
+      (dotimes (index (atspi-get-property service path
+					  atspi-interface-accessible "childCount")
+		      (nreverse children))
+	(push (atspi-call-accessible-method service path
+					    "getChildAtIndex" :int32 index)
+	      children)))))
 
-(defun atspi-child-count (service path)
-  (length (atspi-list-children-paths service path)))
+(defun atspi-accessible-child-count (service path)
+  (if atspi-cache-mode
+      (length (atspi-tree-entry-get-children (atspi-cache-get service path)))
+    (atspi-get-property service path atspi-interface-accessible "childCount")))
 
 (defsubst atspi-tree-entry-get-interface-names (tree-entry)
   "Return list of interfaces supported by the object described by TREE-ENTRY."
   (nth 3 tree-entry))
 
-(defun atspi-list-accessible-interface-names (service path)
-  (atspi-tree-entry-get-interface-names (atspi-cache-get service path)))
+(defun atspi-accessible-interface-names (service path)
+  (if atspi-cache-mode
+      (atspi-tree-entry-get-interface-names (atspi-cache-get service path))
+    (let ((tree (atspi-tree-get-tree service)) interfaces)
+      (while (and tree (not interfaces))
+	(if (string= (atspi-tree-entry-get-path (car tree)) path)
+	    (setq interfaces (atspi-tree-entry-get-interface-names (car tree)))
+	  (setq tree (cdr tree))))
+      interfaces)))
 
 (defsubst atspi-tree-entry-get-name (tree-entry)
   "Return the name (if any) of the accessible object described by TREE-ENTRY."
   (nth 4 tree-entry))
 
 (defun atspi-accessible-name (service path)
-  (interactive
-   (let ((service (completing-read "Service: " (atspi-cache t) nil t)))
-     (list service
-	   (completing-read "Path: "
-			    (cdr (assoc service (atspi-cache)))
-			    nil t))))
-  (let ((name (atspi-tree-entry-get-name (atspi-cache-get service path))))
+  (interactive (atspi-read-service-and-path))
+  (let ((name (if atspi-cache-mode
+		  (atspi-tree-entry-get-name (atspi-cache-get service path))
+		(atspi-get-property service path
+				    atspi-interface-accessible "name"))))
     (if (interactive-p)
 	(if (> (length name) 0)
 	    (message "Accessible name of %s%s is \"%s\"" service path name)
@@ -644,11 +662,17 @@ to other accessible objects."
 		    (cadr relation)))
 	    (call-method "getRelationSet")))
   (get-states ()
-    "Get the current state of accessible object SERVICE PATH via D-Bus."
-    (apply #'atspi-decode-state-bitfields (call-method "getState")))
+    "Get the current state of accessible object SERVICE PATH.
+Only transfers data via D-Bus if `atspi-cache-mode' is not enabled."
+    (if atspi-cache-mode
+	(atspi-tree-entry-get-states (atspi-cache-get service path))
+      (apply #'atspi-decode-state-bitfields (call-method "getState"))))
   (get-role ()
-    "Get the Role indicating the type of ui role played by PATH of SERVICE."
-    (atspi-decode-role (call-method "getRole")))
+    "Get the Role indicating the type of ui role played by PATH of SERVICE.
+Only transfers data via D-Bus if `atspi-cache-mode' is not enabled."
+    (if atspi-cache-mode
+	(atspi-tree-entry-get-role (atspi-cache-get service path))
+      (atspi-decode-role (call-method "getRole"))))
   (get-role-name ()
     (call-method "getRoleName"))
   (get-application ()
@@ -909,10 +933,11 @@ Return t if the text content was successfully changed, nil otherwise."
 	  (widget-create 'atspi-service :tag service :service service))
 	(atspi-registry-get-applications)))
 
-(define-minor-mode atspi-client-mode
-  "Assistive technology client mode."
-  :global t :group 'atspi :require 'atspi :lighter " AT"
-  (if atspi-client-mode
+(define-minor-mode atspi-cache-mode
+  "Assistive technology application cache mode.
+If this mode is on `atspi-cache' is kept up-to-date automatically."
+  :global t :group 'atspi :require 'atspi :lighter " ATC"
+  (if atspi-cache-mode
       (if (not (atspi-available-p))
 	  (error "The AT-SPI registry is not available.")
 	(atspi-cache-synchronise)
