@@ -830,10 +830,28 @@ Return t if the text content was successfully changed, nil otherwise."
 			service (atspi-tree-entry-get-parent tree-entry))))
     path))
 
+(defun atspi-list-all-parents (service path)
+  (if atspi-cache-mode
+      (atspi-tree-entry-get-all-parents service (atspi-cache-get service path))
+    (let* ((tree (atspi-tree-get-tree service))
+	   (entry (atspi-tree-find-entry tree path))
+	   (entries ()))
+      (while entry
+	(setq entries (cons entry entries)
+	      entry (atspi-tree-find-entry tree (atspi-tree-entry-get-parent
+						 entry))))
+      entries)))
+
 (defun atspi-tree-entry-named-path (service tree-entry)
   (remove-if-not (lambda (entry)
 		   (> (length (atspi-tree-entry-get-name entry)) 0))
 		 (atspi-tree-entry-get-all-parents service tree-entry)))
+
+(defun atspi-list-named-parents (service path)
+  (remove-if-not (lambda (entry)
+		   (> (length (atspi-tree-entry-get-name entry)) 0))
+		 (atspi-list-all-parents service path)))
+
 
 (defun atspi-define-action-commands (service)
   (interactive (list (completing-read "Service: "
@@ -855,15 +873,11 @@ Return t if the text content was successfully changed, nil otherwise."
 		 (atspi-action-do-action ,service ,object-path action)))))))))
 
 (defun atspi-focus-changed-echo-function (service path)
-  (let ((tree-entry (atspi-cache-get service path)))
-    (when tree-entry
-      (let ((role (atspi-tree-entry-get-role tree-entry))
-	    (named-path (atspi-tree-entry-named-path service tree-entry))
-	    (children (atspi-tree-entry-get-children tree-entry))
-	    (description (atspi-tree-entry-get-description tree-entry)))
-	(message (format "Focus now on %s (role %s)"
-			 (mapconcat #'atspi-tree-entry-get-name named-path "/")
-			 role))))))
+  (let ((role (atspi-accessible-get-role service path))
+	(named-path (atspi-list-named-parents service path)))
+    (message (format "Focus now on %s (role %s)"
+		     (mapconcat #'atspi-tree-entry-get-name named-path "/")
+		     role))))
   
 (defun espeak (string)
   (let ((proc (start-process "espeak" nil "espeak")))
@@ -936,23 +950,33 @@ Return t if the text content was successfully changed, nil otherwise."
 (define-minor-mode atspi-cache-mode
   "Assistive technology application cache mode.
 If this mode is on `atspi-cache' is kept up-to-date automatically."
-  :global t :group 'atspi :require 'atspi :lighter " ATC"
+  :global t :group 'atspi :require 'atspi
   (if atspi-cache-mode
       (if (not (atspi-available-p))
 	  (error "The AT-SPI registry is not available.")
 	(atspi-cache-synchronise)
 	(atspi-registry-register-update-applications-handler)
 	(atspi-tree-register-update-accessible-handler)
-	(atspi-tree-register-remove-accessible-handler)
+	(atspi-tree-register-remove-accessible-handler))
+    (atspi-registry-unregister-update-applications-handler)
+    (atspi-tree-unregister-update-accessible-handler)
+    (atspi-tree-unregister-remove-accessible-handler)))
+
+(define-minor-mode atspi-client-mode
+  "Assistive technology client mode.
+If this mode is on focus change and window (de)activation events are caught and
+the appropriate hooks are called."
+  :global t :group 'atspi :require 'atspi :lighter " AT"
+  (if atspi-client-mode
+      (progn
+	(unless atspi-cache-mode (atspi-cache-mode 1))
 	(atspi-event-focus-register-focus-handler)
 	(atspi-event-window-register-activate-handler)
 	(atspi-event-window-register-deactivate-handler))
-    (atspi-registry-unregister-update-applications-handler)
-    (atspi-tree-unregister-update-accessible-handler)
-    (atspi-tree-unregister-remove-accessible-handler)
     (atspi-event-focus-unregister-focus-handler)
     (atspi-event-window-unregister-activate-handler)
     (atspi-event-window-unregister-deactivate-handler)))
+
 
 (provide 'atspi)
 ;;; atspi.el ends here
