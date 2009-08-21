@@ -23,6 +23,10 @@
 ;; For this file to be useful you need at least at-spi2-core and at-spi2-atk
 ;; from https://projects.codethink.co.uk/index.php/p/at-spi2/
 
+;; When starting GTK applications you need to use the spiatk GTK module so that
+;; ATK gets bridged to at-spi2-registryd (the D-Bus based AT-SPI registry).
+;; One way to do this is to export GTK_MODULES=gail:spiatk
+
 ;;; Code:
 
 (require 'cl)
@@ -127,8 +131,8 @@ registered with D-Bus." 'dbus-register-signal handler)))
 
 (defvar atspi-cache (make-hash-table :test 'equal)
   "AT-SPI object cache.
-A hash-table where the key of each entry is a D-Bus service name and the value
-is a hash-table where the key is a D-Bus path name and the value is an AT-SPI
+A hash-table where the key is a D-Bus service name and the value is a
+hash-table where the key is a D-Bus path name and the value is an AT-SPI
 object cache structure (a list) received via D-Bus.")
 
 (defun atspi-cache-get-tree (service)
@@ -916,7 +920,7 @@ Return t if the text content was successfully changed, nil otherwise."
     (when (not (> (length name) 0)) (setq name nil))
     (setq role (symbol-name role))
     (list
-     'tree-widget
+     (if (> (length children) 0) 'tree-widget 'item)
      :tag (or name role)
      :service service
      :path path
