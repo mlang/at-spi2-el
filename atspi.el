@@ -43,6 +43,11 @@
     (display-warning 'atspi (apply #'format message args)
 		     :debug "*AT-SPI Debug*")))
 
+(defun atspi-get-property (service path interface property)
+  (car
+   (dbus-call-method
+    :session service path dbus-interface-properties "Get" interface property)))
+
 (defconst atspi-prefix "org.freedesktop.atspi."
   "Common prefix for AT-SPI D-Bus service and interface names.")
 
@@ -89,6 +94,36 @@ and the remaining arguments are the accessible objects just removed from
 For this hook to work `atspi-client-mode' needs to be enabled."
   :type 'hook
   :link '(function-link atspi-registry-register-update-applications-handler))
+
+(defun make-atspi-accessible (service path)
+  "Make an AT-SPI Accessible object."
+  (cons service path))
+
+(defun atspi-accessible-p (object)
+  (and (consp object) (stringp (car object)) (stringp (cdr object))))
+
+(defun atspi-accessible-dbus-service (object)
+  (car object))
+
+(defun atspi-accessible-dbus-path (object)
+  (cdr object))
+
+(defun atspi-accessible-dbus-property (accessible interface property)
+  "From ACCESSIBLE get D-Bus INTERFACE PROPERTY.
+If PROPERTY is readwrite (this is not checked) you can use `setf' to set it."
+  (car
+   (dbus-call-method
+    :session (atspi-accessible-dbus-service accessible)
+    (atspi-accessible-dbus-path accessible) dbus-interface-properties
+    "Get" interface property)))
+
+(defsetf atspi-accessible-dbus-property (accessible interface property) (value)
+  `(let ((service (atspi-accessible-dbus-service ,accessible))
+	 (path (atspi-accessible-dbus-path ,accessible)))
+     (dbus-call-method :session service path dbus-interface-properties
+		       "Set" ,interface ,property (list :variant ,value))
+     (car (dbus-call-method :session service path dbus-interface-properties
+			    "Get" ,interface ,property))))
 
 (defun atspi-fill-docstring (column string)
   "Utility function to refill docstrings."
@@ -190,8 +225,7 @@ Returns a list of accessible objects.  Each element is of the form
 (defun atspi-accessible-children (service path)
   (if atspi-cache-mode
       (atspi-tree-entry-get-children (atspi-cache-get service path))
-    (let ((count )
-	  children)
+    (let (children)
       (dotimes (index (atspi-get-property service path
 					  atspi-interface-accessible "childCount")
 		      (nreverse children))
@@ -222,17 +256,17 @@ Returns a list of accessible objects.  Each element is of the form
   "Return the name (if any) of the accessible object described by TREE-ENTRY."
   (nth 4 tree-entry))
 
-(defun atspi-accessible-name (service path)
-  (interactive (atspi-read-service-and-path))
-  (let ((name (if atspi-cache-mode
-		  (atspi-tree-entry-get-name (atspi-cache-get service path))
-		(atspi-get-property service path
-				    atspi-interface-accessible "name"))))
-    (if (interactive-p)
-	(if (> (length name) 0)
-	    (message "Accessible name of %s%s is \"%s\"" service path name)
-	  (message "No accessible name defined for %s%s" service path))
-      name)))
+(defun atspi-accessible-name (accessible)
+  (if atspi-cache-mode
+      (atspi-tree-entry-get-name (atspi-cache-get
+				  (atspi-accessible-dbus-service accessible)
+				  (atspi-accessible-dbus-path accessible)))
+    (atspi-accessible-dbus-property accessible
+				    atspi-interface-accessible "name")))
+
+(defsetf atspi-accessible-name (accessible) (value)
+  `(setf (atspi-accessible-dbus-property ,accessible atspi-interface-accessible
+					 "name") ,value))
 
 (defconst atspi-roles
   [invalid accelerator-label alert animation arrow calendar canvas check-box
@@ -767,11 +801,6 @@ nil otherwise."
   (set-caret-offset (position)
     (check-type position integer)
     (call-method "setCaretOffset" :int32 position)))
-
-(defun atspi-get-property (service path interface property)
-  (car
-   (dbus-call-method
-    :session service path dbus-interface-properties "Get" interface property)))
 
 (defun atspi-text-get-character-count (service path)
   (atspi-get-property service path atspi-interface-text "characterCount"))
