@@ -321,38 +321,30 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
   :type 'hook
   :options '(atspi-log-cache-update))
 
-(defun atspi-log-cache-addition (service tree-entry)
-  (let ((path (atspi-tree-entry-get-path tree-entry)))
-    (atspi-debug "New %s %s%s" (atspi-tree-entry-get-role tree-entry)
-		 service path)))
+(defun atspi-log-cache-addition (accessible)
+  (atspi-debug "New %s: %S" (atspi-accessible-role accessible) accessible))
 
-(defun atspi-log-cache-update (service old-entry new-entry)
-  (macrolet ((compare-cache-value (accessor comparator &rest body)
-	       `(let ((old (,accessor old-entry))
-		      (new (,accessor new-entry)))
+(defun atspi-log-cache-update (accessible old-plist)
+  (macrolet ((compare-cache-value (property comparator &rest body)
+	       `(let ((old (plist-get old-plist ,property))
+		      (new (atspi-cache-plist-get accessible ,property)))
 		  (unless (,comparator old new) ,@body))))
-    (let ((path (atspi-tree-entry-get-path new-entry)))
-      (compare-cache-value atspi-tree-entry-get-parent string=
-       (atspi-debug "%s%s parent changed from %s to %s"
-		    service path old new))
-      (compare-cache-value atspi-tree-entry-get-children equal
-       (atspi-debug "%s%s children changed from %s to %s"
-		    service path old new))
-      (compare-cache-value atspi-tree-entry-get-interface-names equal
-       (atspi-debug "%s%s interfaces changed from %s to %s"
-		    service path old new))
-      (compare-cache-value atspi-tree-entry-get-name string=
-       (atspi-debug "%s%s accessible name changed from %s to %s"
-		    service path old new))
-      (compare-cache-value atspi-tree-entry-get-role eq
-       (atspi-debug "%s%s role changed from %s to %s"
-		    service path old new))
-      (compare-cache-value atspi-tree-entry-get-description string=
-       (atspi-debug "%s%s accessible description changed from %s to %s"
-		    service path old new))
-      (compare-cache-value atspi-tree-entry-get-states equal
-       (atspi-debug "%s%s states changed from %s to %s"
-		    service path old new)))))
+    (compare-cache-value :parent string=
+     (atspi-debug "%S parent changed from %s to %s" accessible old new))
+    (compare-cache-value :children equal
+     (atspi-debug "%S children changed from %s to %s" accessible old new))
+    (compare-cache-value :interfaces equal
+     (atspi-debug "%S interfaces changed from %s to %s" accessible old new))
+    (compare-cache-value :name string=
+     (atspi-debug "%S accessible name changed from %s to %s"
+		  accessible old new))
+    (compare-cache-value :role eq
+     (atspi-debug "%S role changed from %s to %s" accessible old new))
+    (compare-cache-value :description string=
+     (atspi-debug "%S accessible description changed from %s to %s"
+		  accessible old new))
+    (compare-cache-value :states equal
+     (atspi-debug "%S states changed from %s to %s" accessible old new))))
 
 (atspi-define-signal tree update-accessible
   nil atspi-path-tree "updateAccessible" (tree-entry)
@@ -377,15 +369,15 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
       (setq old-plist (gethash path table))
       (puthash path plist table))
     (if (not old-plist)
-	(run-hook-with-args
-	 'atspi-accessible-added-hook service plist)
+	(run-hook-with-args 'atspi-accessible-added-hook
+			    (make-atspi-accessible service path))
       (if (equal old-plist plist)
 	  (display-warning
 	   'atspi (format "Ignoring cache update with equal data on %s%s"
 			  service path)
 	   :debug)
-	(run-hook-with-args
-	 'atspi-accessible-updated-hook service old-plist plist)))))
+	(run-hook-with-args 'atspi-accessible-updated-hook
+			    (make-atspi-accessible service path) old-plist)))))
 
 (defun atspi-log-cache-removal (service tree-entry)
   (atspi-debug "Cache removal of %s: %S" service tree-entry))
@@ -683,9 +675,7 @@ See also `atspi-accessible-child-count'."
 (defun atspi-accessible-name (accessible)
   "A (short) string representing ACCESSIBLE's name."
   (if atspi-cache-mode
-      (atspi-tree-entry-get-name (atspi-cache-get
-				  (atspi-accessible-dbus-service accessible)
-				  (atspi-accessible-dbus-path accessible)))
+      (atspi-cache-plist-get accessible :name)
     (atspi-accessible-dbus-property accessible
 				    atspi-interface-accessible "name")))
 
