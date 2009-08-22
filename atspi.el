@@ -257,6 +257,7 @@ Returns a list of accessible objects.  Each element is of the form
   (nth 4 tree-entry))
 
 (defun atspi-accessible-name (accessible)
+  "A (short) string representing ACCESSIBLE's name."
   (if atspi-cache-mode
       (atspi-tree-entry-get-name (atspi-cache-get
 				  (atspi-accessible-dbus-service accessible)
@@ -264,9 +265,22 @@ Returns a list of accessible objects.  Each element is of the form
     (atspi-accessible-dbus-property accessible
 				    atspi-interface-accessible "name")))
 
-(defsetf atspi-accessible-name (accessible) (value)
+(defsetf atspi-accessible-name (accessible) (name)
   `(setf (atspi-accessible-dbus-property ,accessible atspi-interface-accessible
-					 "name") ,value))
+					 "name") ,name))
+
+(defun atspi-accessible-description (accessible)
+  "A string describing ACCESSIBLE in more detail than `atspi-accessible-name'."
+  (if atspi-cache-mode
+      (atspi-tree-entry-get-description
+       (atspi-cache-get (atspi-accessible-dbus-service accessible)
+			(atspi-accessible-dbus-path accessible)))
+    (atspi-accessible-dbus-property accessible
+				    atspi-interface-accessible "description")))
+
+(defsetf atspi-accessible-description (accessible) (description)
+  `(setf (atspi-accessible-dbus-property ,accessible atspi-interface-accessible
+					 "description") ,description))
 
 (defconst atspi-roles
   [invalid accelerator-label alert animation arrow calendar canvas check-box
