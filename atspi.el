@@ -43,11 +43,6 @@
     (display-warning 'atspi (apply #'format message args)
 		     :debug "*AT-SPI Debug*")))
 
-(defun atspi-get-property (service path interface property)
-  (car
-   (dbus-call-method
-    :session service path dbus-interface-properties "Get" interface property)))
-
 (defconst atspi-prefix "org.freedesktop.atspi."
   "Common prefix for AT-SPI D-Bus service and interface names.")
 
@@ -96,13 +91,16 @@ For this hook to work `atspi-client-mode' needs to be enabled."
   :link '(function-link atspi-registry-register-update-applications-handler))
 
 (defun make-atspi-accessible (service path)
-  "Make an AT-SPI Accessible object corresponding to D-Bus SERVICE and PATH."
+  "Make an Accessible object corresponding to D-Bus SERVICE and PATH."
   (check-type service string)
   (check-type path string)
   (cons service path))
 
 (defun atspi-accessible-p (object)
-  (and (consp object) (stringp (car object)) (stringp (cdr object))))
+  (and (consp object) (stringp (car object)) (stringp (cdr object))
+       (let ((dbus-path-prefix (concat atspi-path-prefix "accessible")))
+	 (string= dbus-path-prefix
+		  (substring (cdr object) 0 (length dbus-path-prefix))))))
 
 (defsubst atspi-accessible-dbus-service (object)
   (car object))
