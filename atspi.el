@@ -662,55 +662,13 @@ translated to the current locale."
 (defconst atspi-relation-types
   [null             ; Not a meaningful relationship; clients should not
                     ; normally encounter this value.
-   label-for        ; Object is a label for one or more other objects
-   labelled-by      ; Object is labelled by one or more other objects.
-   controller-for   ; Object is an interactive object which modifies the
-                    ; state, onscreen location, or other attributes of one or
-                    ; more target objects.
-   controlled-by    ; Object state, position, etc. is modified/controlled by
-		    ; user interaction with one or more other objects. For
-		    ; instance a viewport or scroll pane may be :controlled-by
-		    ; scrollbars.
-   member-of        ; Object has a grouping relationship (e.g. 'same group
-                    ; as') to one or more other objects.
-   tooltip-for      ; Object is a tooltip associated with another object.
+   label-for labelled-by controller-for controlled-by member-of tooltip-for
    node-child-of    ; Reserved for future use.
    extended         ; Used to indicate that a relationship exists, but its
                     ; type is not specified in the enumeration and must be
                     ; obtained via a call to getRelationTypeName.
-   flows-to         ; Object renders content which flows logically to another
-                    ; object.  For instance, text in a paragraph may flow to
-                    ; another object which is not the        'next sibling' in
-                    ; the accessibility hierarchy.
-   flows-from       ; Reciprocal of flows-to
-   subwindow-of     ; Object is visually and semantically considered a
-                    ; subwindow of another object, even though it is not the
-                    ; object's child.  Useful when dealing with embedded
-                    ; applications and other cases where the widget hierarchy
-                    ; does not map cleanly to the onscreen presentation.
-   embeds           ; Similar to :subwindow-of, but specifically used for
-                    ; cross-process embedding.
-   embedded-by      ; Reciprocal of :embeds; Used to denote content rendered
-                    ; by embedded renderers that live in a separate process
-                    ; space from the embedding context.
-   popup-for        ; Denotes that the object is a transient window or frame
-                    ; associated with another onscreen object.  Similar to
-                    ; tooltip-for, but more general.  Useful for windows which
-                    ; are technically toplevels but which, for one or more
-                    ; reasons, do not explicitly cause their associated window
-                    ; to lose 'window focus'.  Creation of a role window
-                    ; object with the popup-for relation usually requires some
-                    ; presentation action on the part of assistive technology
-                    ; clients, even though the previous toplevel ROLE_FRAME
-                    ; object may still be the active window.
-   parent-window-of ; This is the reciprocal relatipnship to :popup-for
-   description-for  ; Indicates that an object provides descriptive
-                    ; information about another object; more verbose than
-                    ; label-for
-   described-by     ; Indicates that another object provides descriptive
-                    ; information about this object; more verbose than
-                    ; labelled-by
-   ]
+   flows-to flows-from subwindow-of embeds embedded-by popup-for
+   parent-window-of description-for described-by]
   "Specifies a relationship between objects (possibly one-to-many or
 many-to-one) outside of the normal parent/child hierarchical relationship.  It
 allows better semantic identification of how objects are associated with one
@@ -741,6 +699,66 @@ Returns an alist of the form ((relation accessible...) ...)"
 				  (make-atspi-accessible service path))
 			      (cadr relation))))
 	    (atspi-call-accessible-method accessible "getRelationSet"))))
+
+(defmacro atspi-defreltype-accessor (relation-type arg docstring)
+  (let ((name (intern (concat "atspi-accessible-" (symbol-name
+						   relation-type)))))
+    `(defun ,name (,arg)
+       ,docstring
+       (cdr (assq ',relation-type (atspi-accessible-relation-set ,arg))))))
+(put 'atspi-defreltype-accessor 'lisp-indent-function 2)
+
+(atspi-defreltype-accessor label-for accessible
+  "ACCESSIBLE is a label for one or more other objects.")
+(atspi-defreltype-accessor labelled-by accessible
+  "ACCESSIBLE is labelled by one or more other objects.")
+(atspi-defreltype-accessor controller-for accessible
+  "ACCESSIBLE is an interactive object which modifies the state, onscreen
+location, or other attributes of one or more target objects.")
+(atspi-defreltype-accessor controlled-by accessible
+  "ACCESSIBLE's state, position, etc. is modified/controlled by user
+interaction with one or more other objects.  For instance a viewport or scroll
+pane may be controlled-by scrollbars.")
+(atspi-defreltype-accessor member-of accessible
+  "ACCESSIBLE has a grouping relationship (e.g. 'same group as') to one or more
+other objects.")
+(atspi-defreltype-accessor tooltip-for accessible
+  "ACCESSIBLE is a tooltip associated with another object.")
+(atspi-defreltype-accessor flows-to accessible
+  "ACCESSIBLE renders content which flows logically to another object.
+For instance, text in a paragraph may flow to another object which is not the
+'next sibling' in the accessibility hierarchy.")
+(atspi-defreltype-accessor flows-from accessible
+  "Reciprocal of `atspi-accessible-flows-to'.")
+(atspi-defreltype-accessor subwindow-of accessible
+  "ACCESSIBLE is visually and semantically considered a subwindow of another
+object, even though it is not the object's child.  Useful when dealing with
+embedded applications and other cases where the widget hierarchy does not map
+cleanly to the onscreen presentation.")
+(atspi-defreltype-accessor embeds accessible
+  "Similar to `atspi-accessible-subwindow-of', but specifically used for
+cross-process embedding.")
+(atspi-defreltype-accessor embedded-by accessible
+  "Reciprocal of `atspi-accessible-embeds'; used to denote content rendered by
+embedded renderers that live in a separate process space from the embedding
+context.")
+(atspi-defreltype-accessor popup-for accessible
+  "Denotes that the ACCESSIBLE is a transient window or frame associated with
+another onscreen object.  Similar to `atspi-accessible-tooltip-for', but more
+general.  Useful for windows which are technically toplevels but which, for
+one or more reasons, do not explicitly cause their associated window to lose
+'window focus'.  Creation of a role window object with the popup-for relation
+usually requires some presentation action on the part of assistive technology
+clients, even though the previous toplevel role frame object may still be the
+active window.")
+(atspi-defreltype-accessor parent-window-of accessible
+  "The reciprocal relatipnship to `atspi-accessible-popup-for'.")
+(atspi-defreltype-accessor description-for accessible
+  "Indicates that ACCESSIBLE provides descriptive information about another
+object; more verbose than `atspi-accessible-label-for'.")
+(atspi-defreltype-accessor described-by accessible
+  "Indicates that another object provides descriptive information about
+ACCESSIBLE; more verbose than `atspi-accessible-labelled-by'.")
 
 (defun atspi-accessible-attributes (accessible)
   ""
