@@ -57,39 +57,6 @@ For invocation of methods of this interface see `atspi-call-registry-method'.")
 (defconst atspi-path-prefix "/org/freedesktop/atspi/"
   "Common prefix for AT-SPI D-Bus path names.")
 
-(defconst atspi-path-registry (concat atspi-path-prefix "registry")
-  "The D-Bus path of the AT-SPI registry.")
-
-(defconst atspi-interface-registry atspi-service-registry
-  "The AT-SPI D-Bus registry interface name.")
-
-(defun atspi-call-registry-method (method &rest args)
-  "Call `atspi-interface-registry' METHOD with ARGS."
-  (check-type method string)
-  (apply #'dbus-call-method :session atspi-service-registry
-	 atspi-path-registry atspi-interface-registry method args))
-
-(defun atspi-registry-get-applications ()
-  "Retrieve a list of all the currently registered applications.
-Return a list of D-Bus service names."
-  (dbus-ignore-errors (atspi-call-registry-method "getApplications")))
-
-(defcustom atspi-application-added-hook nil
-  "List of functions to call when a new application was added to the registry.
-The D-Bus service name of the newly added application is passed as an argument.
-For this hook to work `atspi-client-mode' needs to be enabled."
-  :type 'hook
-  :link '(function-link atspi-registry-register-update-applications-handler))
-
-(defcustom atspi-application-removed-hook nil
-  "List of functions to call when an application was removed from the registry.
-The first argument is the D-Bus service name of the application removed,
-and the remaining arguments are the accessible objects just removed from
-`atspi-cache'.
-For this hook to work `atspi-client-mode' needs to be enabled."
-  :type 'hook
-  :link '(function-link atspi-registry-register-update-applications-handler))
-
 (defun make-atspi-accessible (service path)
   "Make an Accessible object corresponding to D-Bus SERVICE and PATH."
   (check-type service string)
@@ -186,6 +153,39 @@ hash-table where the key is a D-Bus path name and the value is plist.")
     (when table
       (plist-get (gethash (atspi-accessible-dbus-path accessible) table)
 		 property))))
+
+(defconst atspi-path-registry (concat atspi-path-prefix "registry")
+  "The D-Bus path of the AT-SPI registry.")
+
+(defconst atspi-interface-registry atspi-service-registry
+  "The AT-SPI D-Bus registry interface name.")
+
+(defun atspi-call-registry-method (method &rest args)
+  "Call `atspi-interface-registry' METHOD with ARGS."
+  (check-type method string)
+  (apply #'dbus-call-method :session atspi-service-registry
+	 atspi-path-registry atspi-interface-registry method args))
+
+(defun atspi-registry-get-applications ()
+  "Retrieve a list of all the currently registered applications.
+Return a list of D-Bus service names."
+  (dbus-ignore-errors (atspi-call-registry-method "getApplications")))
+
+(defcustom atspi-application-added-hook nil
+  "List of functions to call when a new application was added to the registry.
+The D-Bus service name of the newly added application is passed as an argument.
+For this hook to work `atspi-client-mode' needs to be enabled."
+  :type 'hook
+  :link '(function-link atspi-registry-register-update-applications-handler))
+
+(defcustom atspi-application-removed-hook nil
+  "List of functions to call when an application was removed from the registry.
+The first argument is the D-Bus service name of the application removed,
+and the remaining arguments are the accessible objects just removed from
+`atspi-cache'.
+For this hook to work `atspi-client-mode' needs to be enabled."
+  :type 'hook
+  :link '(function-link atspi-registry-register-update-applications-handler))
 
 (defconst atspi-interface-tree (concat atspi-prefix "Tree")
   "Tree of accessible objects D-Bus interface name.
@@ -687,9 +687,7 @@ See also `atspi-accessible-child-count'."
 (defun atspi-accessible-description (accessible)
   "A string describing ACCESSIBLE in more detail than `atspi-accessible-name'."
   (if atspi-cache-mode
-      (atspi-tree-entry-get-description
-       (atspi-cache-get (atspi-accessible-dbus-service accessible)
-			(atspi-accessible-dbus-path accessible)))
+      (atspi-cache-plist-get accessible :description)
     (atspi-accessible-dbus-property accessible
 				    atspi-interface-accessible "description")))
 
