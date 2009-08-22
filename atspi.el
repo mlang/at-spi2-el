@@ -69,11 +69,11 @@ For invocation of methods of this interface see `atspi-call-registry-method'.")
 	 (string= dbus-path-prefix
 		  (substring (cdr object) 0 (length dbus-path-prefix))))))
 
-(defsubst atspi-accessible-dbus-service (object)
-  (car object))
+(defsubst atspi-accessible-dbus-service (accessible)
+  (car accessible))
 
-(defsubst atspi-accessible-dbus-path (object)
-  (cdr object))
+(defsubst atspi-accessible-dbus-path (accessible)
+  (cdr accessible))
 
 (defun atspi-accessible-dbus-property (accessible interface property)
   "From ACCESSIBLE get value of D-Bus INTERFACE PROPERTY.
@@ -85,7 +85,8 @@ If PROPERTY is readwrite (this is not checked) you can use `setf' to set it."
     "Get" interface property)))
 
 (defsetf atspi-accessible-dbus-property (accessible interface property) (value)
-  "On ACCESSIBLE set D-Bus INTERFACE PROPERTY to VALUE."
+  "On ACCESSIBLE set D-Bus INTERFACE PROPERTY to VALUE.
+PROPERTY needs to be readwrite, this is not checked."
   `(let ((service (atspi-accessible-dbus-service ,accessible))
 	 (path (atspi-accessible-dbus-path ,accessible)))
      (dbus-call-method :session service path dbus-interface-properties
@@ -213,24 +214,27 @@ See `atspi-treee-entry-get-path', `atspi-treee-entry-get-parent',
 for accessor functions to the individual elements."
   (atspi-call-tree-method service "getTree"))
 
+(defun atspi-tree-get-root (service)
+  (make-atspi-accessible service (atspi-call-tree-method service "getRoot")))
+
 (defsubst atspi-tree-entry-get-path (tree-entry)
   "Return the D-Bus path of TREE-ENTRY, an element of `atspi-tree-get-tree'."
   (car tree-entry))
 
 (defsubst atspi-tree-entry-get-parent (tree-entry)
-  "Return the D-Bus path of the parent of accessible described by TREE-ENTRY."
+  "Returns the D-Bus path of the parent of TREE-ENTRY."
   (nth 1 tree-entry))
 
 (defsubst atspi-tree-entry-get-children (tree-entry)
-  "Return a list of D-Bus paths of the children of this TREE-ENTRY."
+  "Return a list of D-Bus paths of the children of TREE-ENTRY."
   (nth 2 tree-entry))
 
 (defsubst atspi-tree-entry-get-interfaces (tree-entry)
-  "Return list of interfaces supported by the object described by TREE-ENTRY."
+  "Return the list of D-Bus interfaces supported by TREE-ENTRY."
   (nth 3 tree-entry))
 
 (defsubst atspi-tree-entry-get-name (tree-entry)
-  "Return the name (if any) of the accessible object described by TREE-ENTRY."
+  "Return the accessible name of TREE-ENTRY."
   (nth 4 tree-entry))
 
 (defconst atspi-roles
@@ -250,19 +254,17 @@ for accessor functions to the individual elements."
    redundant-object form link input-method-window]
   "Object roles.")
 
-(defun atspi-decode-role (value)
+(defsubst atspi-decode-role (value)
   "Convert VALUE (a integer) to an AT-SPI object role (a symbol)."
   (check-type value integer)
-  (if (or (< value 0) (>= value (length atspi-roles)))
-      (error "Role enumeration value out of bounds" value)
-    (aref atspi-roles value)))
+  (aref atspi-roles value))
 
 (defsubst atspi-tree-entry-get-role (tree-entry)
-  "Return the role (a keyword) of the object described by TREE-ENTRY."
+  "Return the ui role (a symbol) of the object described by TREE-ENTRY."
   (atspi-decode-role (nth 5 tree-entry)))
 
 (defsubst atspi-tree-entry-get-description (tree-entry)
-  "Return the description of the object described by TREE-ENTRY."
+  "Return the accessible description of the object described by TREE-ENTRY."
   (nth 6 tree-entry))
 
 (defconst atspi-states
@@ -290,34 +292,18 @@ for accessor functions to the individual elements."
   "Return the states associated with the object described by TREE-ENTRY."
   (apply #'atspi-decode-state-bitfields (nth 7 tree-entry)))
 
-(mapcar (lambda (role)
-	  (eval
-	   `(defun ,(intern (concat "atspi-tree-entry-role-"
-				    (symbol-name role) "-p"))
-	      (tree-entry)
-	      (eq (atspi-tree-entry-get-role tree-entry) ,role))))
-	atspi-roles)
-
-(mapcar (lambda (interface)
-	  (eval
-	   `(defun ,(intern (concat "atspi-tree-entry-"
-				    (symbol-name interface)
-				    "-p")) (tree-entry)
-	     (when (member (concat "org.freedesktop.atspi."
-				   ,(symbol-name interface))
-			   (atspi-tree-entry-get-interface-names tree-entry))
-	       t))))
-	'(Action Application Component EditableText Text))
-
 (defcustom atspi-accessible-added-hook '(atspi-log-cache-addition)
-  "Hook run when an accessible cache entry is added.
-Arguments are (SERVICE TREE-ENTRY)"
+  "Hook run when an accessible was added to the cache.
+The new accessible object added is passed as the sole argument.
+For this hook to work, `atspi-cache-mode' needs to be on."
   :type 'hook
   :options '(atspi-log-cache-addition))
 
 (defcustom atspi-accessible-updated-hook '(atspi-log-cache-update)
-  "Hook run when an accessible cache entry was updated.
-Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
+  "Hook run when an accessible object is updated in `atspi-cache'.
+Arguments are (accessible old-plist) where old-plist is a plist with the
+cache content before the update.
+For this hook to work, `atspi-cache-mode' needs to be on."
   :type 'hook
   :options '(atspi-log-cache-update))
 
@@ -383,9 +369,10 @@ Arguments are (SERVICE OLD-TREE-ENTRY NEW-TREE-ENTRY)"
   (atspi-debug "Cache removal of %s: %S" service tree-entry))
 
 (defcustom atspi-accessible-removed-hook '(atspi-log-cache-removal)
-  "List of functions to call before a certain tree-entry is removed from
-`atspi-cache'.
-Arguments passed are (SERVICE TREE-ENTRY)."
+  "List of functions to call when a certain ACCESSIBLE was removed.
+Arguments passed are (SERVICE PLIST) where SERVICE is the D-Bus service name
+and PLIST is a plist of last known cached properties.
+This hook is run after the removal of Accessible object from `atspi-cache'."
   :type 'hook
   :options '(atspi-log-cache-removal))
 
@@ -398,25 +385,15 @@ Arguments passed are (SERVICE TREE-ENTRY)."
 	   'atspi (format "Cache removal request for unknown service %s"
 			  service)
 	   :warning)
-	(let ((tree-entry (gethash path table)))
-	  (if (not tree-entry)
+	(let ((plist (gethash path table)))
+	  (if (not plist)
 	      (display-warning
 	       'atspi (format "Removal request for unknown object %s%s"
 			      service path)
 	       :warning)
 	    (remhash path table)
-	    (run-hook-with-args
-	     'atspi-accessible-removed-hook service tree-entry)))))))
-
-(defun atspi-get-application-path (service)
-  (dbus-call-method
-   :session service "/org/freedesktop/atspi/accessible"
-   "org.freedesktop.atspi.Accessible" "getApplication"))
-
-(defun atspi-get-root (application)
-  (dbus-call-method
-   :session application
-   "/org/freedesktop/atspi/tree" "org.freedesktop.atspi.Tree" "getRoot"))
+	    (run-hook-with-args 'atspi-accessible-removed-hook
+				service plist)))))))
 
 (defun atspi-cache-synchronise ()
   (let ((services (atspi-registry-get-applications)))
@@ -522,88 +499,26 @@ For this hook to work `atspi-client-mode' needs to be enabled."
 
 ;;;; Accessible interfaces
 
-(defun atspi-read-service-and-path (&optional path-predicate)
+(defun atspi-read-accessible (&optional path-predicate error-message)
   "Prompt user for a D-Bus service and path of an AT-SPI Accessible object."
-  (let* ((service (completing-read "Service: "
-				   (atspi-registry-get-applications) nil t))
-	(path (completing-read "Object path: "
-			       (atspi-tree-get-tree service) path-predicate
-			       t)))
-    (list service path)))
-
-(defconst atspi-relation-types
-  [null             ; Not a meaningful relationship; clients should not
-                    ; normally encounter this value.
-   label-for        ; Object is a label for one or more other objects
-   labelled-by      ; Object is labelled by one or more other objects.
-   controller-for   ; Object is an interactive object which modifies the
-                    ; state, onscreen location, or other attributes of one or
-                    ; more target objects.
-   controlled-by    ; Object state, position, etc. is modified/controlled by
-		    ; user interaction with one or more other objects. For
-		    ; instance a viewport or scroll pane may be :controlled-by
-		    ; scrollbars.
-   member-of        ; Object has a grouping relationship (e.g. 'same group as')
-	  	    ; to one or more other objects.
-   tooltip-for      ; Object is a tooltip associated with another object.
-   node-child-of    ; Reserved for future use.
-   extended         ; Used to indicate that a relationship exists, but its type
-                    ; is not specified in the enumeration and must be obtained
-                    ; via a call to getRelationTypeName.
-   flows-to         ; Object renders content which flows logically to another
-                    ; object.  For instance, text in a paragraph may flow to
-                    ; another object which is not the        'next sibling' in
-                    ; the accessibility hierarchy.
-   flows-from       ; Reciprocal of flows-to
-   subwindow-of     ; Object is visually and semantically considered a
-                    ; subwindow of another object, even though it is not the
-                    ; object's child.  Useful when dealing with embedded
-                    ; applications and other cases where the widget hierarchy
-                    ; does not map cleanly to the onscreen presentation.
-   embeds           ; Similar to :subwindow-of, but specifically used for
-                    ; cross-process embedding.
-   embedded-by      ; Reciprocal of :embeds; Used to denote content rendered
-                    ; by embedded renderers that live in a separate process
-                    ; space from the embedding context.
-   popup-for        ; Denotes that the object is a transient window or frame
-                    ; associated with another onscreen object.  Similar to
-                    ; :tooltip-for, but more general.  Useful for windows which
-                    ; are technically toplevels but which, for one or more
-                    ; reasons, do not explicitly cause their associated window
-                    ; to lose 'window focus'.  Creation of a ROLE_WINDOW object
-                    ; with the :popup-for relation usually requires some
-                    ; presentation action on the part of assistive technology
-                    ; clients, even though the previous toplevel ROLE_FRAME
-                    ; object may still be the active window.
-   parent-window-of ; This is the reciprocal relatipnship to :popup-for
-   description-for  ; Indicates that an object provides descriptive
-                    ; information about another object; more verbose than
-                    ; label-for
-   described-by     ; Indicates that another object provides descriptive
-                    ; information about this object; more verbose than
-                    ; labelled-by
-   ]
-  "Specifies a relationship between objects (possibly one-to-many or
-many-to-one) outside of the normal parent/child hierarchical relationship.  It
-allows better semantic identification of how objects are associated with one
-another.
-For instance the :labelled-by relationship may be used to identify labelling
-information that should accompany the accessibleName property when presenting
-an object's content or identity to the end user.  Similarly, :controller-for
-can be used to further specify the context in which a valuator is useful,
-and/or the other UI components which are directly effected by user interactions
-with the valuator.  Common examples include association of scrollbars with the
-viewport or panel which they control.")
-
-(defun atspi-decode-relation-type (value)
-  "Convert VALUE (a integer) to a AT-SPI relation type (a symbol)."
-  (check-type value integer)
-  (if (or (< value 0) (>= value (length atspi-relation-types)))
-      (error "Relation type enumeration value out of bounds" value)
-    (when (= value 0)
-      (display-warning
-       'atspi "Encountered null relation type value" :warning))
-    (aref atspi-relation-types value)))
+  (let ((services (atspi-registry-get-applications)) service app-name)
+    (unless services
+      (error "No applications known to the AT-SPI registry."))
+    (if (= (length services) 1)
+	(setq service (car services)
+	      app-name (atspi-accessible-name (atspi-tree-get-root service)))
+      (let ((apps (mapcar (lambda (service)
+			    (cons (atspi-accessible-name
+				   (atspi-tree-get-root service))
+				  service)) services)))
+	(setq app-name (completing-read "Application: " apps nil t))
+	(setq service (cdr (assoc app-name apps)))))
+    (let ((tree (remove-if-not path-predicate (atspi-tree-get-tree service))))
+      (unless tree
+	(error error-message app-name))
+      (let ((path (completing-read (format "%s D-Bus path: " app-name)
+				   tree nil t)))
+	(make-atspi-accessible service path)))))
 
 (defconst atspi-interface-accessible (concat atspi-prefix "Accessible")
   "The AT-SPI Accessible D-Bus interface name.
@@ -619,9 +534,10 @@ To invoke this interface use `atspi-call-accessible-method'.")
   "Return a list of D-Bus interface names implemented by ACCESSIBLE."
   (if atspi-cache-mode
       (atspi-cache-plist-get accessible :interfaces)
-    (let ((path (atspi-accessible-dbus-path accessible)))
-      (loop for tree-entry in (atspi-tree-get-tree
-			       (atspi-accessible-dbus-service accessible))
+    ;; This is expensive and wasteful, but all we can do without a cache
+    (let ((service (atspi-accessible-dbus-service accessible))
+	  (path (atspi-accessible-dbus-path accessible)))
+      (loop for tree-entry in (atspi-tree-get-tree service)
 	    until (string= (atspi-tree-entry-get-path tree-entry) path)
 	    finally return (when tree-entry
 			     (atspi-tree-entry-get-interfaces tree-entry))))))
@@ -674,10 +590,16 @@ See also `atspi-accessible-child-count'."
 
 (defun atspi-accessible-name (accessible)
   "A (short) string representing ACCESSIBLE's name."
-  (if atspi-cache-mode
-      (atspi-cache-plist-get accessible :name)
-    (atspi-accessible-dbus-property accessible
-				    atspi-interface-accessible "name")))
+  (interactive (list (atspi-read-accessible
+		      (lambda (tree-entry)
+			(> (length (atspi-tree-entry-get-name tree-entry))
+			   0)))))
+  (let ((name (if atspi-cache-mode
+		  (atspi-cache-plist-get accessible :name)
+		(atspi-accessible-dbus-property accessible
+						atspi-interface-accessible
+						"name"))))
+    (if (interactive-p)	(message "%s" name) name)))
 
 (defsetf atspi-accessible-name (accessible) (string)
   "Set ACCESSIBLE's name to STRING."
@@ -686,6 +608,11 @@ See also `atspi-accessible-child-count'."
 
 (defun atspi-accessible-description (accessible)
   "A string describing ACCESSIBLE in more detail than `atspi-accessible-name'."
+  (interactive (list (atspi-read-accessible
+		      (lambda (tree-entry)
+			(> (length (atspi-tree-entry-get-description tree-entry))
+			   0))
+		      "%s has no object with an accessible description")))
   (if atspi-cache-mode
       (atspi-cache-plist-get accessible :description)
     (atspi-accessible-dbus-property accessible
@@ -699,17 +626,27 @@ See also `atspi-accessible-child-count'."
   "Get the Role indicating the type of ui role played by ACCESSIBLE.
 Only transfers data via D-Bus if `atspi-cache-mode' is not enabled.
 Returns one of the elements of `atspi-roles'."
-  (if atspi-cache-mode
-      (atspi-cache-plist-get accessible	:role)
-    (atspi-decode-role (atspi-call-accessible-method accessible "getRole"))))
+  (interactive (list (atspi-read-accessible)))
+  (let ((role (if atspi-cache-mode
+		  (atspi-cache-plist-get accessible	:role)
+		(atspi-decode-role (atspi-call-accessible-method accessible
+								 "getRole")))))
+    (if (interactive-p)
+	(message "%s" role)
+      role)))
 
 (defun atspi-accessible-states (accessible)
   "Get the current states of ACCESSIBLE object.
 Only transfers data via D-Bus if `atspi-cache-mode' is not enabled."
-  (if atspi-cache-mode
-      (atspi-cache-plist-get accessible :states)
-    (apply #'atspi-decode-state-bitfields
-	   (atspi-call-accessible-method accessible "getState"))))
+  (interactive (list (atspi-read-accessible)))
+  (let ((states (if atspi-cache-mode
+		    (atspi-cache-plist-get accessible :states)
+		  (apply #'atspi-decode-state-bitfields
+			 (atspi-call-accessible-method accessible
+						       "getState")))))
+    (if (interactive-p)
+	(message "%s" (mapconcat #'symbol-name states ", "))
+      states)))
 
 (defun atspi-accessible-role-name (accessible)
   "Get a string indicating the type of ui role played by ACCESSIBLE."
@@ -721,6 +658,78 @@ Only transfers data via D-Bus if `atspi-cache-mode' is not enabled."
 translated to the current locale."
   (decode-coding-string
    (atspi-call-accessible-method accessible "getLocalizedRoleName") 'utf-8 t))
+
+(defconst atspi-relation-types
+  [null             ; Not a meaningful relationship; clients should not
+                    ; normally encounter this value.
+   label-for        ; Object is a label for one or more other objects
+   labelled-by      ; Object is labelled by one or more other objects.
+   controller-for   ; Object is an interactive object which modifies the
+                    ; state, onscreen location, or other attributes of one or
+                    ; more target objects.
+   controlled-by    ; Object state, position, etc. is modified/controlled by
+		    ; user interaction with one or more other objects. For
+		    ; instance a viewport or scroll pane may be :controlled-by
+		    ; scrollbars.
+   member-of        ; Object has a grouping relationship (e.g. 'same group
+                    ; as') to one or more other objects.
+   tooltip-for      ; Object is a tooltip associated with another object.
+   node-child-of    ; Reserved for future use.
+   extended         ; Used to indicate that a relationship exists, but its
+                    ; type is not specified in the enumeration and must be
+                    ; obtained via a call to getRelationTypeName.
+   flows-to         ; Object renders content which flows logically to another
+                    ; object.  For instance, text in a paragraph may flow to
+                    ; another object which is not the        'next sibling' in
+                    ; the accessibility hierarchy.
+   flows-from       ; Reciprocal of flows-to
+   subwindow-of     ; Object is visually and semantically considered a
+                    ; subwindow of another object, even though it is not the
+                    ; object's child.  Useful when dealing with embedded
+                    ; applications and other cases where the widget hierarchy
+                    ; does not map cleanly to the onscreen presentation.
+   embeds           ; Similar to :subwindow-of, but specifically used for
+                    ; cross-process embedding.
+   embedded-by      ; Reciprocal of :embeds; Used to denote content rendered
+                    ; by embedded renderers that live in a separate process
+                    ; space from the embedding context.
+   popup-for        ; Denotes that the object is a transient window or frame
+                    ; associated with another onscreen object.  Similar to
+                    ; tooltip-for, but more general.  Useful for windows which
+                    ; are technically toplevels but which, for one or more
+                    ; reasons, do not explicitly cause their associated window
+                    ; to lose 'window focus'.  Creation of a role window
+                    ; object with the popup-for relation usually requires some
+                    ; presentation action on the part of assistive technology
+                    ; clients, even though the previous toplevel ROLE_FRAME
+                    ; object may still be the active window.
+   parent-window-of ; This is the reciprocal relatipnship to :popup-for
+   description-for  ; Indicates that an object provides descriptive
+                    ; information about another object; more verbose than
+                    ; label-for
+   described-by     ; Indicates that another object provides descriptive
+                    ; information about this object; more verbose than
+                    ; labelled-by
+   ]
+  "Specifies a relationship between objects (possibly one-to-many or
+many-to-one) outside of the normal parent/child hierarchical relationship.  It
+allows better semantic identification of how objects are associated with one
+another.
+For instance the labelled-by relationship may be used to identify labelling
+information that should accompany `atspi-accessible-name' when presenting
+an object's content or identity to the end user.  Similarly, controller-for
+can be used to further specify the context in which a valuator is useful,
+and/or the other UI components which are directly effected by user
+interactions with the valuator.  Common examples include association of
+scrollbars with the viewport or panel which they control.")
+
+(defun atspi-decode-relation-type (integer)
+  "Convert INTEGER to a relation type (see `atspi-relation-types')."
+  (check-type integer integer)
+  (when (= integer 0)
+    (display-warning
+     'atspi "Encountered null relation type value" :warning))
+  (aref atspi-relation-types integer))
 
 (defun atspi-accessible-relation-set (accessible)
   "Get a set defining the relationship of ACCESSIBLE to other objects.
@@ -800,16 +809,22 @@ To invoke this interface use `atspi-call-action-method'.")
 	   (atspi-accessible-dbus-interface-names accessible))))
 
 (defun atspi-call-action-method (accessible method &rest args)
-  "On ACCESSIBLE call `atspi-interface-action' METHOD with optional ARGS."
+  "On ACCESSIBLE call `atspi-interface-action' METHOD with optional ARGS.
+See also `atspi-action-get-actions', `atspi-action-do-action',
+`atspi-action-n-actions' for more specialised functions."
   (apply #'dbus-call-method :session (atspi-accessible-dbus-service accessible)
 	 (atspi-accessible-dbus-path accessible) atspi-interface-action
 	 method args))
 
 (defun atspi-action-get-actions (accessible)
+  "Retrieves the actions associated with ACCESSIBLE (an Action object)."
   (atspi-call-action-method accessible "getActions"))
 
 (defun atspi-action-do-action (accessible action)
-  "Invoke ACTION (a string or integer index) of Action object ACCESSIBLE."
+  "Cause ACCESSIBLE to perform the specified ACTION (a integer or string).
+If ACTION is a string `atspi-action-get-actions' is used to determine the
+action index.
+If ACTION is a integer it needs to be less than `atspi-action-n-actions'."
   (atspi-check-interface-action accessible)
   (when (stringp action)
     (let* ((actions (atspi-action-get-actions accessible))
@@ -821,6 +836,7 @@ To invoke this interface use `atspi-call-action-method'.")
   (atspi-call-action-method accessible "doAction" :int32 action))
 
 (defun atspi-action-n-actions (accessible)
+  "Retrieves the number of actions ACCESSIBLE (an Action object) supports."
   (atspi-check-interface-action accessible)
   (atspi-accessible-dbus-property accessible atspi-interface-action
 				  "nActions"))
@@ -839,16 +855,21 @@ To invoke this interface use `atspi-call-action-method'.")
 To invoke this interface use `atspi-call-component-method'.")
 
 (defun atspi-component-p (accessible)
+  "Return non-nil if ACCESSIBLE implements `atspi-interface-component'."
   (atspi-accessible-dbus-interface-implemented-p
    accessible atspi-interface-component))
 
 (defun atspi-call-component-method (accessible method &rest args)
-  "On ACCESSIBLE call `atspi-interface-component' METHOD with optional ARGS."
+  "On ACCESSIBLE call `atspi-interface-component' METHOD with optional ARGS.
+See also `atspi-component-extents' and `atspi-component-grab-focus' for more
+specialized functions."
   (apply #'dbus-call-method :session (atspi-accessible-dbus-service accessible)
 	 (atspi-accessible-dbus-path accessible) atspi-interface-component
 	 method args))
 
-(defun atspi-component-get-extents (component &optional relative-to)
+(defun atspi-component-extents (component &optional relative-to)
+  "Obtain the COMPONENT's bounding box, in pixels, relative to the specified
+coordinate system."
   (unless relative-to (setq relative-to :screen))
   (unless (integerp relative-to)
     (setq relative-to (atspi-encode-coord-type relative-to)))
@@ -938,6 +959,48 @@ Return t if the text content was successfully changed, nil otherwise."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'atspi-editable-text-mode-submit)
     map))
+
+(defconst atspi-interface-value (concat atspi-prefix "Value")
+  "The AT-SPI Value D-Bus interface name.
+
+An interface supporting controls which allow a one-dimensional, scalar
+quantity to be modified or which reflect a scalar quantity.  (If the editable
+state is not present, the valuator is treated as read only.")
+
+(defun atspi-value-p (accessible)
+  (atspi-accessible-dbus-interface-implemented-p
+   accessible atspi-interface-value))
+
+(defun atspi-value-minimum-value (valuator)
+  "Retrieves the minimum value allowed by VALUATOR."
+  (atspi-accessible-dbus-property valuator atspi-interface-value
+				  "minimumValue"))
+
+(defun atspi-value-maximum-value (valuator)
+  "Retrieves the maximum value allowed by VALUATOR."
+  (atspi-accessible-dbus-property valuator atspi-interface-value
+				  "maximumValue"))
+
+(defun atspi-value-minimum-increment (valuator)
+  "Retrieves the smallest incremental change which VALUATOR allows.
+If 0, the incremental changes to the valuator are limited only by the
+precision of a double precision value on the platform."
+  (atspi-accessible-dbus-property valuator atspi-interface-value
+				  "minimumIncrement"))
+
+(defun atspi-value-current-value (valuator)
+  "Retrieve the current value of VALUATOR.
+If `atspi-accessible-states' contains editable
+ (setf (atspi-value-current-value valuator) new-value)
+can be used to change the current value."
+  (atspi-accessible-dbus-property valuator atspi-interface-value
+				  "currentValue"))
+
+(defsetf atspi-value-current-value (valuator) (value)
+  "Set VALUATOR's current VALUE.
+See `atspi-value-minimum-increment'."
+  `(setf (atspi-accessible-dbus-property ,valuator atspi-interface-value
+					"currentValue") ,value))
 
 (defun atspi-invoke-menu-item (service path &optional do-action)
   (interactive
