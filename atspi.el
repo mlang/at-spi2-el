@@ -432,8 +432,8 @@ Arguments passed are (SERVICE TREE-ENTRY)."
 	       (unless (member service services)
 		 (atspi-cache-remove-service service))) atspi-cache)
     (dolist (service services)
-      (let ((paths (mapcar #'atspi-tree-entry-get-path
-			   (atspi-cache-get-tree service))))
+      (let ((paths (mapcar #'atspi-accessible-dbus-path
+			   (atspi-cache-objects service))))
 	(dolist (tree-entry (atspi-tree-get-tree service))
 	  (atspi-cache-put service tree-entry)
 	  (setq paths (delete (atspi-tree-entry-get-path tree-entry) paths)))
@@ -626,15 +626,13 @@ To invoke this interface use `atspi-call-accessible-method'.")
 (defun atspi-accessible-dbus-interface-names (accessible)
   "Return a list of D-Bus interface names implemented by ACCESSIBLE."
   (if atspi-cache-mode
-      (atspi-cache-plist-get accessible :interfaces))
-    (let ((path (atspi-accessible-dbus-path accessible))
-	  (tree (atspi-tree-get-tree service))
-	  interfaces)
-      (while (and tree (not interfaces))
-	(if (string= (atspi-tree-entry-get-path (car tree)) path)
-	    (setq interfaces (atspi-tree-entry-get-interfaces (car tree)))
-	  (setq tree (cdr tree))))
-      interfaces))
+      (atspi-cache-plist-get accessible :interfaces)
+    (let ((path (atspi-accessible-dbus-path accessible)))
+      (loop for tree-entry in (atspi-tree-get-tree
+			       (atspi-accessible-dbus-service accessible))
+	    until (string= (atspi-tree-entry-get-path tree-entry) path)
+	    finally return (when tree-entry
+			     (atspi-tree-entry-get-interfaces tree-entry))))))
 
 (defun atspi-accessible-dbus-interface-implemented-p (accessible interface)
   (and (atspi-accessible-p accessible)
@@ -673,7 +671,7 @@ See also `atspi-accessible-child-count'."
 		  (push (atspi-call-accessible-method accessible
 						      "getChildAtIndex"
 						      :int32 index)
-			children)))))
+			children)))))))
 
 (defun atspi-accessible-child-count (accessible)
   "The number of children contained by this ACCESSIBLE."
