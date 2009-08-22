@@ -265,9 +265,9 @@ Returns a list of accessible objects.  Each element is of the form
     (atspi-accessible-dbus-property accessible
 				    atspi-interface-accessible "name")))
 
-(defsetf atspi-accessible-name (accessible) (name)
+(defsetf atspi-accessible-name (accessible) (string)
   `(setf (atspi-accessible-dbus-property ,accessible atspi-interface-accessible
-					 "name") ,name))
+					 "name") ,string))
 
 (defun atspi-accessible-description (accessible)
   "A string describing ACCESSIBLE in more detail than `atspi-accessible-name'."
@@ -278,9 +278,9 @@ Returns a list of accessible objects.  Each element is of the form
     (atspi-accessible-dbus-property accessible
 				    atspi-interface-accessible "description")))
 
-(defsetf atspi-accessible-description (accessible) (description)
+(defsetf atspi-accessible-description (accessible) (string)
   `(setf (atspi-accessible-dbus-property ,accessible atspi-interface-accessible
-					 "description") ,description))
+					 "description") ,string))
 
 (defconst atspi-roles
   [invalid accelerator-label alert animation arrow calendar canvas check-box
@@ -577,51 +577,6 @@ For this hook to work `atspi-client-mode' needs to be enabled."
 
 ;;;; Accessible interfaces
 
-(defun atspi-define-accessible-defun-method (call-method name method)
-  (let* ((func (intern (concat "atspi-" (symbol-name name) "-"
-			      (symbol-name (nth 0 method)))))
-	(args (append (list 'service 'path) (nth 1 method)))
-	(docstring (and (stringp (nth 2 method)) (nth 2 method)))
-	(interactive (or (and docstring (eq (car-safe (nth 3 method))
-					    'interactive) (nth 3 method))
-			 (and (eq (car-safe (nth 2 method))
-				  'interactive) (nth 2 method))))
-	(body (or (and docstring interactive (cddddr method))
-		  (and (or docstring interactive) (cdddr method))
-		  (cddr method))))
-    (append
-     (list 'defun func args)
-     (and docstring (list docstring))
-     (and interactive (list interactive))
-     (list
-      (append (list 'macrolet)
-	      (list (list (list 'call-method '(method &rest args)
-			  (list 'append 
-				(list 'list (list 'quote call-method)
-				      ''service ''path
-				      'method) 'args))))
-	      body)))))
-
-(defmacro atspi-define-accessible-interface (name suffix &rest methods)
-  "Define `atspi-interface-NAME' and `atspi-call-NAME-method'."
-  (let ((call-method (intern (concat "atspi-call-"
-				     (symbol-name name) "-method")))
-	(interface (intern (concat "atspi-interface-" (symbol-name name)))))
-    `(progn
-       (defconst ,interface (concat atspi-prefix ,suffix)
-	 ,(format "The AT-SPI %s D-Bus interface name.
-To invoke this interface use `%s'." suffix call-method))
-       (defun ,call-method (service path method &rest args)
-	 ,(format "On SERVICE PATH call `%s' METHOD with optional ARGS."
-		  interface)
-	 (apply #'dbus-call-method :session service path
-		,interface method args))
-       ,@(mapcar (lambda (method)
-		   (atspi-define-accessible-defun-method
-		    call-method name method)) methods))))
-
-(put 'atspi-define-accessible-interface 'lisp-indent-function 2)
-
 (defun atspi-read-service-and-path (&optional path-predicate)
   "Prompt user for a D-Bus service and path of an AT-SPI Accessible object."
   (let* ((service (completing-read "Service: "
@@ -705,85 +660,137 @@ viewport or panel which they control.")
        'atspi "Encountered null relation type value" :warning))
     (aref atspi-relation-types value)))
 
-(atspi-define-accessible-interface accessible "Accessible"
-  (get-relation-set ()
-    "Get a set defining the relationship of accessible object PATH of SERVICE
-to other accessible objects."
-    (mapcar (lambda (relation)
+(defconst atspi-interface-accessible (concat atspi-prefix "Accessible")
+  "The AT-SPI Accessible D-Bus interface name.
+To invoke this interface use `atspi-call-accessible-method'.")
+
+(defun atspi-call-accessible-method (accessible method &rest args)
+  "On ACCESSIBLE call `atspi-interface-accessible' METHOD with optional ARGS."
+  (apply #'dbus-call-method :session (atspi-accessible-dbus-service accessible)
+	 (atspi-accessible-dbus-path accessible) atspi-interface-accessible
+	 method args))
+
+(defun atspi-accessible-get-relation-set (accessible)
+  "Get a set defining the relationship of ACCESSIBLE to other accessible
+objects."
+  (mapcar #'(lambda (relation)
 	      (cons (atspi-decode-relation-type (car relation))
 		    (cadr relation)))
-	    (call-method "getRelationSet")))
-  (get-states ()
-    "Get the current state of accessible object SERVICE PATH.
-Only transfers data via D-Bus if `atspi-cache-mode' is not enabled."
-    (if atspi-cache-mode
-	(atspi-tree-entry-get-states (atspi-cache-get service path))
-      (apply #'atspi-decode-state-bitfields (call-method "getState"))))
-  (get-role ()
-    "Get the Role indicating the type of ui role played by PATH of SERVICE.
-Only transfers data via D-Bus if `atspi-cache-mode' is not enabled."
-    (if atspi-cache-mode
-	(atspi-tree-entry-get-role (atspi-cache-get service path))
-      (atspi-decode-role (call-method "getRole"))))
-  (get-role-name ()
-    (call-method "getRoleName"))
-  (get-application ()
-    "Get the containing Application object path for this object."
-    (call-method "getApplication")))
-  
-(atspi-define-accessible-interface application "Application")
+	  (atspi-call-accessible-method accessible "getRelationSet")))
 
-(defun atspi-toolkit-name (service &optional path)
+(defun atspi-accessible-get-states (accessible)
+  "Get the current state of ACCESSIBLE object.
+Only transfers data via D-Bus if `atspi-cache-mode' is not enabled."
+  (if atspi-cache-mode
+      (atspi-tree-entry-get-states
+       (atspi-cache-get
+	(atspi-accessible-dbus-service accessible)
+	(atspi-accessible-dbus-path accessible)))
+    (apply #'atspi-decode-state-bitfields
+	   (atspi-call-accessible-method accessible "getState"))))
+
+(defun atspi-accessible-get-role (accessible)
+  "Get the Role indicating the type of ui role played by ACCESSIBLE.
+Only transfers data via D-Bus if `atspi-cache-mode' is not enabled."
+  (if atspi-cache-mode
+      (atspi-tree-entry-get-role
+       (atspi-cache-get
+	(atspi-accessible-dbus-service accessible)
+	(atspi-accessible-dbus-path accessible)))
+    (atspi-decode-role (atspi-call-accessible-method accessible "getRole"))))
+
+(defun atspi-accessible-get-role-name (accessible)
+  (atspi-call-accessible-method accessible "getRoleName"))
+
+(defun atspi-accessible-get-application (accessible)
+  "Get the containing Application object for ACCESSIBLE."
+  (make-atspi-accessible
+   (atspi-accessible-dbus-service accessible)
+   (atspi-call-accessible-method accessible "getApplication")))
+
+(defconst atspi-interface-application (concat atspi-prefix "Application")
+  "The AT-SPI Application D-Bus interface name.
+To invoke this interface use `atspi-call-application-method'.")
+
+(defun atspi-call-application-method (accessible method &rest args)
+  "On ACCESSIBLE call `atspi-interface-application' METHOD with optional ARGS."
+  (apply #'dbus-call-method :session (atspi-accessible-dbus-service accessible)
+	 (atspi-accessible-dbus-path accessible) atspi-interface-application
+	 method args))
+
+(defun atspi-toolkit-name (accessible)
   "A string indicating the type of user interface toolkit which is used by
 the application.
 Ordinarily clients should be toolkit-agnostic, dependencies on this property
-should be avoided where possible."
-  (check-type service string)
-  (unless path (setq path (concat atspi-path-prefix "accessible")))
-  (check-type path string)
-  (unless (atspi-interface-implemented-p
-	   service path atspi-interface-application)
-    (setq path (atspi-accessible-get-application service path)))
-  (atspi-get-property service path atspi-interface-application "toolkitName"))
+should be avoided where possible.
+ACCESSIBLE can optionally be a D-Bus service name string."
+  (let (service path)
+    (if (stringp accessible)
+	(setq service accessible
+	      path (concat atspi-path-prefix "accessible")
+	      accessible (make-atspi-accessible service path))
+      (setq service (atspi-accessible-dbus-service accessible)
+	    path (atspi-accessible-dbus-path accessible)))
+    (unless (atspi-interface-implemented-p
+	     service path atspi-interface-application)
+      (setq accessible (atspi-accessible-get-application accessible)))
+    (atspi-accessible-dbus-property accessible atspi-interface-application
+				    "toolkitName")))
 
-(defun atspi-toolkit-version (service &optional path)
+(defun atspi-toolkit-version (accessible)
   "A string indicating the version number of the application's accessibility
-bridge implementation."
-  (check-type service string)
-  (unless path (setq path "/org/freedesktop/atspi/accessible"))
-  (check-type path string)
-  (unless (atspi-interface-implemented-p
-	   service path atspi-interface-application)
-    (setq path (atspi-accessible-get-application service path)))
-  (atspi-get-property service path atspi-interface-application "version"))
+bridge implementation.  See also `atspi-toolkit-name'.
+ACCESSIBLE can optionally be a D-Bus service name string."
+  (let (service path)
+    (if (stringp accessible)
+	(setq service accessible
+	      path (concat atspi-path-prefix "accessible")
+	      accessible (make-atspi-accessible service path))
+      (setq service (atspi-accessible-dbus-service accessible)
+	    path (atspi-accessible-dbus-path accessible)))
+    (unless (atspi-interface-implemented-p
+	     service path atspi-interface-application)
+      (setq accessible (atspi-accessible-get-application accessible)))
+    (atspi-accessible-dbus-property accessible atspi-interface-application
+				    "version")))
 
-(atspi-define-accessible-interface action "Action"
-  (get-actions ()
-    (call-method "getActions"))
-  (do-action (action)
-    "Invoke ACTION (a string or integer index) of Action object SERVICE PATH."
-    (interactive
-     (destructuring-bind (service path)
-	 (atspi-read-service-and-path #'atspi-tree-entry-Action-p)
-       (list service path
-	     (completing-read "Action to invoke: "
-			      (atspi-action-get-actions service path) nil t))))
-    (when (stringp action)
-      (let* ((actions (atspi-action-get-actions service path))
-	     (index (position action actions :key #'car :test #'string=)))
-	(if index
-	    (setq action index)
-	  (error "Action \"%s\" is not defined" action))))
-    (check-type action integer)
-    (call-method "doAction" :int32 action)))
+(defconst atspi-interface-action (concat atspi-prefix "Action")
+  "The AT-SPI Action D-Bus interface name.
+To invoke this interface use `atspi-call-action-method'.")
+
+(defun atspi-call-action-method (accessible method &rest args)
+  "On ACCESSIBLE call `atspi-interface-action' METHOD with optional ARGS."
+  (apply #'dbus-call-method :session (atspi-accessible-dbus-service accessible)
+	 (atspi-accessible-dbus-path accessible) atspi-interface-action
+	 method args))
+
+(defun atspi-action-get-actions (accessible)
+  (atspi-call-action-method accessible "getActions"))
+
+(defun atspi-action-do-action (accessible action)
+  "Invoke ACTION (a string or integer index) of Action object ACCESSIBLE."
+  (when (stringp action)
+    (let* ((actions (atspi-action-get-actions accessible))
+	   (index (position action actions :key #'car :test #'string=)))
+      (if index
+	  (setq action index)
+	(error "Action \"%s\" is not defined" action))))
+  (check-type action integer)
+  (atspi-call-action-method accessible "doAction" :int32 action))
 
 (defun atspi-interface-implemented-p (service path interface)
-  (member interface (atspi-list-accessible-interface-names service path)))
+  (member interface (atspi-accessible-interface-names service path)))
 
-(defun atspi-action-n-actions (service path)
-  (unless (atspi-interface-implemented-p service path atspi-interface-action)
-    (error "%s%s does not implement %s" service path atspi-interface-action))
-  (atspi-get-property service path atspi-interface-action "nActions"))
+(defun atspi-action-n-actions (accessible)
+  (when atspi-cache-mode
+    (unless (atspi-interface-implemented-p
+	     (atspi-accessible-dbus-service accessible)
+	     (atspi-accessible-dbus-path accessible)
+	     atspi-interface-action)
+      (error "Interface %s not provided by %S"
+	     atspi-interface-action accessible)))
+  (atspi-accessible-dbus-property accessible atspi-interface-action
+				  "nActions"))
 
 (defconst atspi-coord-type-keywords '(:screen :window))
 
@@ -794,59 +801,74 @@ bridge implementation."
 (defun atspi-encode-coord-type (keyword)
   (position keyword atspi-coord-type-keywords))
 
-(atspi-define-accessible-interface component "Component"
-  (get-extents (&optional relative-to)
-    (unless relative-to (setq relative-to :screen))
-    (unless (integerp relative-to)
-      (setq relative-to (atspi-encode-coord-type relative-to)))
-    (call-method "getExtents" :uint32 relative-to))
-  (grab-focus ()
-    "Request that the object obtain keyboard focus.
-Return t if keyboard focus was successfully transferred to the Component,
+(defconst atspi-interface-component (concat atspi-prefix "Component")
+  "The AT-SPI Component D-Bus interface name.
+To invoke this interface use `atspi-call-component-method'.")
+(defun atspi-call-component-method (accessible method &rest args)
+  "On ACCESSIBLE call `atspi-interface-component' METHOD with optional ARGS."
+  (apply #'dbus-call-method :session (atspi-accessible-dbus-service accessible)
+	 (atspi-accessible-dbus-path accessible) atspi-interface-component
+	 method args))
+
+(defun atspi-component-get-extents (component &optional relative-to)
+  (unless relative-to (setq relative-to :screen))
+  (unless (integerp relative-to)
+    (setq relative-to (atspi-encode-coord-type relative-to)))
+  (atspi-call-component-method component "getExtents" :uint32 relative-to))
+
+(defun atspi-component-grab-focus (component)
+  "Request that the COMPONENT obtain keyboard focus.
+Return t if keyboard focus was successfully transferred to the COMPONENT,
 nil otherwise."
-    (= (call-method "grabFocus") 0)))
+  (= (atspi-call-component-method component "grabFocus") 0))
 
-(atspi-define-accessible-interface text "Text"
-  (get-text (&optional start end)
-    "Obtain all or part of the textual content of a Text object."
-    (unless start (setq start 0))
-    (unless end (setq end -1))
-    (call-method "getText" :int32 start :int32 end))
-  (set-caret-offset (position)
-    (check-type position integer)
-    (call-method "setCaretOffset" :int32 position)))
+(defconst atspi-interface-text (concat atspi-prefix "Text")
+  "The AT-SPI Text D-Bus interface name.
+To invoke this interface use `atspi-call-text-method'.")
 
-(defun atspi-text-get-character-count (service path)
-  (atspi-get-property service path atspi-interface-text "characterCount"))
+(defun atspi-call-text-method (accessible method &rest args)
+  "On ACCESSIBLE call `atspi-interface-text' METHOD with optional ARGS."
+  (apply #'dbus-call-method :session (atspi-accessible-dbus-service accessible)
+	 (atspi-accessible-dbus-path accessible) atspi-interface-text
+	 method args))
 
-(defun atspi-text-get-caret-offset (service path)
-  (atspi-get-property service path atspi-interface-text "caretOffset"))
+(defun atspi-text-get-text (accessible &optional start end)
+  "Obtain all or part of the textual content of a Text object ACCESSIBLE."
+  (unless start (setq start 0))
+  (unless end (setq end -1))
+  (atspi-call-text-method accessible "getText" :int32 start :int32 end))
 
-(atspi-define-accessible-interface editable-text "EditableText"
-  (set-text-contents (string)
-    "Replace the text contents with a new STRING, discarding the old contents.
+(defun atspi-text-caret-offset (accessible)
+  (atspi-accessible-dbus-property accessible atspi-interface-text
+				  "caretOffset"))
+
+(defsetf atspi-text-caret-offset (accessible) (position)
+  `(when (atspi-call-text-method ,accessible "setCaretOffset" :int32 ,position)
+     ,position))
+
+(defun atspi-text-character-count (accessible)
+  (atspi-get-property accessible atspi-interface-text "characterCount"))
+
+(defconst atspi-interface-editable-text (concat atspi-prefix "EditableText")
+  "The AT-SPI EditableText D-Bus interface name.
+To invoke this interface use `atspi-call-editable-text-method'.")
+(defun atspi-call-editable-text-method (accessible method &rest args)
+  "On ACCESSIBLE call `atspi-interface-editable-text' METHOD with ARGS."
+  (apply #'dbus-call-method :session (atspi-accessible-dbus-service accessible)
+	 (atspi-accessible-dbus-path accessible) atspi-interface-editable-text
+	 method args))
+
+(defun atspi-editable-text-set-text-contents (accessible string)
+  "Replace the text contents with a new STRING, discarding the old contents.
 Return t if the text content was successfully changed, nil otherwise."
-    (interactive
-     (destructuring-bind (service path)
-	 (atspi-read-service-and-path #'atspi-tree-entry-EditableText-p)
-       (list service path
-	     (read-string "New text contents: "))))
-    (check-type string string)
-    (let ((result (atspi-call-editable-text-method
-		   service path "setTextContents"
-		   (encode-coding-string string 'utf-8))))
-      (if (interactive-p)
-	  (if result
-	      (message "Text content changed successfully")
-	    (message "Failed to change text content"))
-	result)))
-  (insert-text (position string)
-    "At POSITION (a integer) insert STRING into an EditableText object."
-    (atspi-call-editable-text-method
-     service path "insertText"
-     :int32 position
-     :string (encode-coding-string string 'utf-8)
-     :int32 (length string))))
+  (atspi-call-editable-text-method accessible "setTextContents"
+				   (encode-coding-string string 'utf-8)))
+(defun atspi-editable-text-insert-text (accessible position string)
+  "At POSITION (a integer) insert STRING into an EditableText object."
+  (atspi-call-editable-text-method accessible "insertText"
+				   :int32 position
+				   :string (encode-coding-string string 'utf-8)
+				   :int32 (length string)))
 
 (defun atspi-invoke-menu-item (service path &optional do-action)
   (interactive
