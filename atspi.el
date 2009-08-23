@@ -116,7 +116,8 @@ PROPERTY needs to be readwrite, this is not checked."
     (let ((fill-column 76))
       (insert string) (fill-region (point-min) (point-max)) (buffer-string))))
 
-(defmacro atspi-define-dbus-signal-handler (type name service path signal args &rest body)
+(defmacro atspi-define-dbus-signal-handler (type name service path signal args
+						 &rest body)
   "Define `atspi-TYPE-NAME-handler' for D-Bus SIGNAL of `atspi-interface-TYPE'.
 Also define `atspi-TYPE-(un)register-NAME-handler' for handler activation
 management."
@@ -152,7 +153,8 @@ registered with D-Bus." 'dbus-register-signal handler)))
 (defvar atspi-cache (make-hash-table :test 'equal)
   "AT-SPI object cache.
 A hash-table where the key is a D-Bus service name and the value is a
-hash-table where the key is a D-Bus path name and the value is plist.")
+hash-table where the key is a D-Bus path name and the value is a plist with
+the keys :parent :children :interfaces :name :role :description and :states.")
 
 (defun atspi-cache-objects (service)
   "Return a list of all Accessible objects of SERVICE in `atspi-cache'."
@@ -605,6 +607,35 @@ See also `atspi-accessible-child-count'."
       (length (atspi-cache-plist-get accessible :children))
     (atspi-accessible-dbus-property accessible atspi-interface-accessible
 				    "childCount")))
+
+(defun atspi-accessible-index-in-parent (accessible)
+  "Get the index of ACCESSIBLE in its parent's child list."
+  (if atspi-cache-mode
+      (let ((parent (atspi-accessible-parent accessible)))
+	(when parent
+	  (position accessible (atspi-accessible-children parent)
+		    :test #'equal)))
+    (atspi-call-accessible-method accessible "getIndexInParent")))
+
+(defun atspi-accessible-previous-sibling (accessible)
+  "Return the previous sibling of ACCESSIBLE.
+If ACCESSIBLE is the first element of its parent's child list nil is returned."
+  (let ((index-in-parent (atspi-accessible-index-in-parent accessible)))
+    (when index-in-parent
+      (let ((siblings (atspi-accessible-children (atspi-accessible-parent
+						  accessible))))
+	(when (> index-in-parent 0)
+	  (nth (1- index-in-parent) siblings))))))
+
+(defun atspi-accessible-next-sibling (accessible)
+  "Return the next sibling of ACCESSIBLE.
+If ACCESSIBLE is the last element of its parent's child list nil is returned."
+  (let ((index-in-parent (atspi-accessible-index-in-parent accessible)))
+    (when index-in-parent
+      (let ((siblings (atspi-accessible-children (atspi-accessible-parent
+						  accessible))))
+	(when (> (1- (length siblings)) index-in-parent)
+	  (nth (1+ index-in-parent) siblings))))))
 
 (defun atspi-accessible-name (accessible)
   "A (short) string representing ACCESSIBLE's name."
