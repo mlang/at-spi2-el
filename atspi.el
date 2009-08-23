@@ -607,10 +607,23 @@ See also `atspi-accessible-child-count'."
 (defun atspi-accessible-index-in-parent (accessible)
   "Get the index of ACCESSIBLE in its parent's child list."
   (if atspi-cache-mode
-      (let ((parent (atspi-accessible-parent accessible)))
-	(when parent
-	  (position accessible (atspi-accessible-children parent)
-		    :test #'equal)))
+      (let* ((service (atspi-accessible-dbus-service accessible))
+	     (table (gethash service atspi-cache)))
+	(if table
+	    (let* ((path (atspi-accessible-dbus-path accessible))
+		   (parent-path (plist-get (gethash path table) :parent)))
+	      (when (and parent-path
+			 (not (string= parent-path
+				       atspi-path-accessible-root)))
+		(let ((sibling-paths (plist-get (gethash parent-path table)
+						:children))
+		      (index 0))
+		  (while (and sibling-paths (not (string= (car sibling-paths)
+							  path)))
+		    (setq sibling-paths (cdr sibling-paths)
+			  index (1+ index)))
+		  (when sibling-paths index))))
+	  (error "%s is not a known service" service)))
     (atspi-call-accessible-method accessible "getIndexInParent")))
 
 (defun atspi-accessible-previous-sibling (accessible)
