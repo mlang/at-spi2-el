@@ -41,6 +41,13 @@
   "Assistive technology service provider interface."
   :group 'external)
 
+(defun atspi-dbus-session-bus-address ()
+  "Uses dbus-launc to determine the value for DBUS_SESSION_BUS_ADDRESS."
+  (let ((decl (shell-command-to-string
+	       "dbus-launch --sh-syntax --exit-with-session")))
+    (when (string-match "^\\(DBUS_SESSION_BUS_ADDRESS\\)='\\(.*\\)';$" decl)
+      (match-string 2 decl))))
+
 (defun atspi-debug (message &rest args)
   "Log MESSAGE and ARGS."
   (let ((warning-minimum-log-level :debug)
@@ -1173,12 +1180,21 @@ See `atspi-value-minimum-increment'."
 If this mode is on `atspi-cache' is kept up-to-date automatically."
   :global t :group 'atspi :require 'atspi
   (if atspi-cache-mode
-      (if (not (atspi-available-p))
-	  (error "The AT-SPI registry is not available.")
-	(atspi-cache-synchronise)
-	(atspi-registry-register-update-applications-handler)
-	(atspi-tree-register-update-accessible-handler)
-	(atspi-tree-register-remove-accessible-handler))
+      (progn
+	(unless (getenv "DBUS_SESSION_BUS_ADDRESS")
+	  (let ((value (dbus-session-bus-address)))
+	    (if (not value)
+		(display-warning
+		 'atspi
+		 "Unable to determine value for $DBUS_SESSION_BUS_ADDRESS"
+		 :warning)
+	      (setenv "DBUS_SESSION_BUS_ADDRESS" value))))
+	(if (not (atspi-available-p))
+	    (error "The AT-SPI registry is not available.")
+	  (atspi-cache-synchronise)
+	  (atspi-registry-register-update-applications-handler)
+	  (atspi-tree-register-update-accessible-handler)
+	  (atspi-tree-register-remove-accessible-handler)))
     (atspi-registry-unregister-update-applications-handler)
     (atspi-tree-unregister-update-accessible-handler)
     (atspi-tree-unregister-remove-accessible-handler)))
