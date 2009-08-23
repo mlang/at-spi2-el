@@ -27,6 +27,10 @@
 ;; ATK gets bridged to at-spi2-registryd (the D-Bus based AT-SPI registry).
 ;; One way to do this is to export GTK_MODULES=gail:spiatk
 
+
+;;; History:
+;; 
+
 ;;; Code:
 
 (require 'cl)
@@ -38,6 +42,7 @@
   :group 'external)
 
 (defun atspi-debug (message &rest args)
+  "Log MESSAGE and ARGS."
   (let ((warning-minimum-log-level :debug)
 	(warning-fill-prefix "  "))
     (display-warning 'atspi (apply #'format message args)
@@ -64,15 +69,19 @@ For invocation of methods of this interface see `atspi-call-registry-method'.")
   (cons service path))
 
 (defun atspi-accessible-p (object)
+  "Return non-nil if OBJECT is an AT-SPI Accessible object.
+See `make-atspi-accessible'."
   (and (consp object) (stringp (car object)) (stringp (cdr object))
        (let ((dbus-path-prefix (concat atspi-path-prefix "accessible")))
 	 (string= dbus-path-prefix
 		  (substring (cdr object) 0 (length dbus-path-prefix))))))
 
 (defsubst atspi-accessible-dbus-service (accessible)
+  "The D-Bus service name used to communicate with ACCESSIBLE."
   (car accessible))
 
 (defsubst atspi-accessible-dbus-path (accessible)
+  "The D-Bus path name used to communicate with ACCESSIBLE."
   (cdr accessible))
 
 (defun atspi-accessible-dbus-property (accessible interface property)
@@ -100,7 +109,7 @@ PROPERTY needs to be readwrite, this is not checked."
     (let ((fill-column 76))
       (insert string) (fill-region (point-min) (point-max)) (buffer-string))))
 
-(defmacro atspi-define-signal (type name service path signal args &rest body)
+(defmacro atspi-define-dbus-signal-handler (type name service path signal args &rest body)
   "Define `atspi-TYPE-NAME-handler' for D-Bus SIGNAL of `atspi-interface-TYPE'.
 Also define `atspi-TYPE-(un)register-NAME-handler' for handler activation
 management."
@@ -332,7 +341,7 @@ For this hook to work, `atspi-cache-mode' needs to be on."
     (compare-cache-value :states equal
      (atspi-debug "%S states changed from %s to %s" accessible old new))))
 
-(atspi-define-signal tree update-accessible
+(atspi-define-dbus-signal-handler tree update-accessible
   nil atspi-path-tree "updateAccessible" (tree-entry)
   (let ((service (dbus-event-service-name last-input-event)))
     (atspi-cache-put-tree-entry service tree-entry)))
@@ -376,7 +385,7 @@ This hook is run after the removal of Accessible object from `atspi-cache'."
   :type 'hook
   :options '(atspi-log-cache-removal))
 
-(atspi-define-signal tree remove-accessible
+(atspi-define-dbus-signal-handler tree remove-accessible
   nil atspi-path-tree "removeAccessible" (path)
   (let ((service (dbus-event-service-name last-input-event)))
     (let ((table (gethash service atspi-cache)))
@@ -409,7 +418,7 @@ This hook is run after the removal of Accessible object from `atspi-cache'."
 	(mapc (lambda (path) (atspi-cache-remove-object service path))
 	      paths)))))
 
-(atspi-define-signal registry update-applications
+(atspi-define-dbus-signal-handler registry update-applications
   atspi-service-registry atspi-path-registry
   "updateApplications" (what service)
   "Informs us WHAT has changed about SERVICE."
@@ -434,7 +443,7 @@ This hook is run after the removal of Accessible object from `atspi-cache'."
     (when table
       (let ((tree (atspi-cache-get-tree service)))
 	(remhash service atspi-cache)
-	(run-hook-with-args 'atspi-application-removed-hook tree)
+	(run-hook-with-args 'atspi-application-removed-hook service tree)
 	t))))
 
 (defcustom atspi-focus-changed-hook nil
@@ -448,12 +457,12 @@ For this hook to work `atspi-client-mode' needs to be enabled."
   :link '(function-link atspi-event-focus-register-focus-handler))
 
 (defconst atspi-interface-event-focus (concat atspi-prefix "Event.Focus")
-  "Interface for \"focus\" signals.")
+  "Interface for focus change signals.")
 
 (defvar atspi-locus-of-focus nil
   "An alist of the form ((dbus-service . accessible)...).")
 
-(atspi-define-signal event-focus focus
+(atspi-define-dbus-signal-handler event-focus focus
   nil nil
   "focus" (&rest ignore)
   "Call `atspi-focus-changed-hook' when a focus signal is received."
@@ -479,23 +488,25 @@ For this hook to work `atspi-client-mode' needs to be enabled."
   :group 'atspi
   :type 'hook)
 
-(atspi-define-signal event-window activate
+(atspi-define-dbus-signal-handler event-window activate
   nil nil
   "activate" (&rest ignore)
   "Call `atspi-window-activated-hook'."
-  (let ((service (dbus-event-service-name last-input-event))
-	(path (dbus-event-path-name last-input-event)))
-    (atspi-debug "Window %s%s activated" service path)
-    (run-hook-with-args 'atspi-window-activated-hook service path)))
+  (let ((accessible (make-atspi-accessible
+		     (dbus-event-service-name last-input-event)
+		     (dbus-event-path-name last-input-event))))
+    (atspi-debug "Window %S activated" accessible)
+    (run-hook-with-args 'atspi-window-activated-hook accessible)))
 
-(atspi-define-signal event-window deactivate
+(atspi-define-dbus-signal-handler event-window deactivate
   nil nil
   "deactivate" (&rest ignore)
-  "Call `atspi-window-deactivated-hook'."
-  (let ((service (dbus-event-service-name last-input-event))
-	(path (dbus-event-path-name last-input-event)))
-    (atspi-debug "Window %s%s deactivated" service path)
-    (run-hook-with-args 'atspi-window-deactivated-hook service path)))
+  "Calls `atspi-window-deactivated-hook'."
+  (let ((accessible (make-atspi-accessible
+		     (dbus-event-service-name last-input-event)
+		     (dbus-event-path-name last-input-event))))
+    (atspi-debug "Window %S deactivated" accessible)
+    (run-hook-with-args 'atspi-window-deactivated-hook accessible)))
 
 ;;;; Accessible interfaces
 
@@ -1172,6 +1183,10 @@ If this mode is on `atspi-cache' is kept up-to-date automatically."
     (atspi-tree-unregister-update-accessible-handler)
     (atspi-tree-unregister-remove-accessible-handler)))
 
+(defun atspi-cleanup-locus-of-focus (service &rest ignore)
+  (setq atspi-locus-of-focus
+	(delete* service atspi-locus-of-focus :key #'car :test #'string=)))
+
 (define-minor-mode atspi-client-mode
   "Assistive technology client mode.
 If this mode is on focus change and window (de)activation events are caught and
@@ -1180,10 +1195,14 @@ the appropriate hooks are called."
   (if atspi-client-mode
       (progn
 	(unless atspi-cache-mode (atspi-cache-mode 1))
+	(add-hook 'atspi-application-removed-hook
+		  #'atspi-cleanup-locus-of-focus)
 	(atspi-event-focus-register-focus-handler)
 	(atspi-event-window-register-activate-handler)
 	(atspi-event-window-register-deactivate-handler))
     (atspi-event-focus-unregister-focus-handler)
+    (remove-hook 'atspi-application-removed-hook
+		 #'atspi-cleanup-locus-of-focus)
     (atspi-event-window-unregister-activate-handler)
     (atspi-event-window-unregister-deactivate-handler)))
 
