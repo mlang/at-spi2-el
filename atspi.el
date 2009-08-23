@@ -70,7 +70,8 @@ For invocation of methods of this interface see `atspi-call-registry-method'.")
   "Common prefix for AT-SPI D-Bus path names.")
 
 (defun make-atspi-accessible (service path)
-  "Make an Accessible object corresponding to D-Bus SERVICE and PATH."
+  "Make an Accessible object corresponding to D-Bus SERVICE and PATH.
+This is an internal function and should not normally be used."
   (check-type service string)
   (check-type path string)
   (cons service path))
@@ -94,11 +95,12 @@ See `make-atspi-accessible'."
 (defun atspi-accessible-dbus-property (accessible interface property)
   "From ACCESSIBLE get value of D-Bus INTERFACE PROPERTY.
 If PROPERTY is readwrite (this is not checked) you can use `setf' to set it."
-  (car
-   (dbus-call-method
-    :session (atspi-accessible-dbus-service accessible)
-    (atspi-accessible-dbus-path accessible) dbus-interface-properties
-    "Get" interface property)))
+  (check-type accessible atspi-accessible)
+  ;; Introspection does not work so `dbus-get-property' is not usable here
+  (car (dbus-call-method
+	:session (atspi-accessible-dbus-service accessible)
+	(atspi-accessible-dbus-path accessible) dbus-interface-properties
+	"Get" interface property)))
 
 (defsetf atspi-accessible-dbus-property (accessible interface property) (value)
   "On ACCESSIBLE set D-Bus INTERFACE PROPERTY to VALUE.
@@ -167,6 +169,8 @@ the keys :parent :children :interfaces :name :role :description and :states.")
 
 (defun atspi-cache-plist-get (accessible property)
   "From `atspi-cache' return ACCESSIBLE plist PROPERTY value."
+  (check-type accessible atspi-accessible)
+  (check-type property symbol)
   (let ((table (gethash (atspi-accessible-dbus-service accessible)
 			atspi-cache)))
     (when table
@@ -546,6 +550,7 @@ To invoke this interface use `atspi-call-accessible-method'.")
 
 (defun atspi-call-accessible-method (accessible method &rest args)
   "On ACCESSIBLE call `atspi-interface-accessible' METHOD with optional ARGS."
+  (check-type accessible atspi-accessible)
   (apply #'dbus-call-method :session (atspi-accessible-dbus-service accessible)
 	 (atspi-accessible-dbus-path accessible) atspi-interface-accessible
 	 method args))
@@ -568,16 +573,18 @@ To invoke this interface use `atspi-call-accessible-method'.")
 
 (defun atspi-accessible-parent (accessible)
   "Return the parent of ACCESSIBLE."
+  (check-type accessible atspi-accessible)
   (let ((service (atspi-accessible-dbus-service accessible))
 	(path (if atspi-cache-mode
 		  (atspi-cache-plist-get accessible :parent)
 		(atspi-accessible-dbus-property
 		 accessible atspi-interface-accessible "parent"))))
-    (unless (string= path atspi-path-accessible-root)
+    (unless (string-equal path atspi-path-accessible-root)
       (make-atspi-accessible service path))))
 
 (defun atspi-accessible-all-parents (accessible)
   "Return list of all ancestors of ACCESSIBLE (inclusive)."
+  (check-type accessible atspi-accessible)
   (let ((path ()))
     (while accessible
       (setq path (cons accessible path)
@@ -587,6 +594,7 @@ To invoke this interface use `atspi-call-accessible-method'.")
 (defun atspi-accessible-children (accessible)
   "List of children of ACCESSIBLE.
 See also `atspi-accessible-child-count'."
+  (check-type accessible atspi-accessible)
   (let ((dbus-service (atspi-accessible-dbus-service accessible)))
     (mapcar (lambda (dbus-path) (make-atspi-accessible dbus-service dbus-path))
 	    (if atspi-cache-mode
@@ -887,12 +895,6 @@ To invoke this interface use `atspi-call-action-method'.")
   (atspi-accessible-dbus-interface-implemented-p
    accessible atspi-interface-action))
 
-(defun atspi-check-interface-action (accessible)
-  (unless (atspi-action-p accessible)
-    (error "Interface %s not implemented by %S %S"
-	   atspi-interface-action accessible
-	   (atspi-accessible-dbus-interface-names accessible))))
-
 (defun atspi-call-action-method (accessible method &rest args)
   "On ACCESSIBLE call `atspi-interface-action' METHOD with optional ARGS.
 See also `atspi-action-get-actions', `atspi-action-do-action',
@@ -903,6 +905,7 @@ See also `atspi-action-get-actions', `atspi-action-do-action',
 
 (defun atspi-action-get-actions (accessible)
   "Retrieves the actions associated with ACCESSIBLE (an Action object)."
+  (check-type accessible atspi-action)
   (atspi-call-action-method accessible "getActions"))
 
 (defun atspi-action-do-action (accessible action)
@@ -910,19 +913,19 @@ See also `atspi-action-get-actions', `atspi-action-do-action',
 If ACTION is a string `atspi-action-get-actions' is used to determine the
 action index.
 If ACTION is a integer it needs to be less than `atspi-action-n-actions'."
-  (atspi-check-interface-action accessible)
   (when (stringp action)
     (let* ((actions (atspi-action-get-actions accessible))
 	   (index (position action actions :key #'car :test #'string=)))
       (if index
 	  (setq action index)
 	(error "Action \"%s\" is not defined" action))))
+  (check-type accessible atspi-action)
   (check-type action integer)
   (atspi-call-action-method accessible "doAction" :int32 action))
 
 (defun atspi-action-n-actions (accessible)
   "Retrieves the number of actions ACCESSIBLE (an Action object) supports."
-  (atspi-check-interface-action accessible)
+  (check-type accessible atspi-action)
   (atspi-accessible-dbus-property accessible atspi-interface-action
 				  "nActions"))
 
@@ -955,6 +958,7 @@ specialized functions."
 (defun atspi-component-extents (component &optional relative-to)
   "Obtain the COMPONENT's bounding box, in pixels, relative to the specified
 coordinate system."
+  (check-type accessible atspi-component)
   (unless relative-to (setq relative-to :screen))
   (unless (integerp relative-to)
     (setq relative-to (atspi-encode-coord-type relative-to)))
@@ -964,6 +968,7 @@ coordinate system."
   "Request that the COMPONENT obtain keyboard focus.
 Return t if keyboard focus was successfully transferred to the COMPONENT,
 nil otherwise."
+  (check-type accessible atspi-component)
   (= (atspi-call-component-method component "grabFocus") 0))
 
 (defconst atspi-interface-text (concat atspi-prefix "Text")
@@ -982,6 +987,7 @@ To invoke this interface use `atspi-call-text-method'.")
 
 (defun atspi-text-get-text (accessible &optional start end)
   "Obtain all or part of the textual content of a Text object ACCESSIBLE."
+  (check-type accessible atspi-text)
   (unless start (setq start 0))
   (unless end (setq end -1))
   (atspi-call-text-method accessible "getText" :int32 start :int32 end))
@@ -993,6 +999,7 @@ onscreen representation of the caret position is visible, it will correspond
 to this offset.
 The caret offset is given as a character offset, as opposed to a byte offset
 into a text buffer or a column offset."
+  (check-type accessible atspi-text)
   (atspi-accessible-dbus-property accessible atspi-interface-text
 				  "caretOffset"))
 
@@ -1007,6 +1014,7 @@ should be checked to make sure the value was indeed changed."
      ,position))
 
 (defun atspi-text-character-count (accessible)
+  (check-type accessible atspi-text)
   (atspi-accessible-dbus-property accessible atspi-interface-text
 				  "characterCount"))
 
@@ -1027,11 +1035,13 @@ To invoke this interface use `atspi-call-editable-text-method'.")
 (defun atspi-editable-text-set-text-contents (accessible string)
   "Replace the text contents with a new STRING, discarding the old contents.
 Return t if the text content was successfully changed, nil otherwise."
+  (check-type accessible atspi-editable-text)
   (atspi-call-editable-text-method accessible "setTextContents"
 				   (encode-coding-string string 'utf-8)))
 
 (defun atspi-editable-text-insert-text (accessible position string)
   "At POSITION (a integer) insert STRING into an EditableText object."
+  (check-type accessible atspi-editable-text)
   (atspi-call-editable-text-method accessible "insertText"
 				   :int32 position
 				   :string (encode-coding-string string 'utf-8)
@@ -1058,11 +1068,13 @@ state is not present, the valuator is treated as read only.")
 
 (defun atspi-value-minimum-value (valuator)
   "Retrieves the minimum value allowed by VALUATOR."
+  (check-type valuator atspi-value)
   (atspi-accessible-dbus-property valuator atspi-interface-value
 				  "minimumValue"))
 
 (defun atspi-value-maximum-value (valuator)
   "Retrieves the maximum value allowed by VALUATOR."
+  (check-type valuator atspi-value)
   (atspi-accessible-dbus-property valuator atspi-interface-value
 				  "maximumValue"))
 
@@ -1070,6 +1082,7 @@ state is not present, the valuator is treated as read only.")
   "Retrieves the smallest incremental change which VALUATOR allows.
 If 0, the incremental changes to the valuator are limited only by the
 precision of a double precision value on the platform."
+  (check-type valuator atspi-value)
   (atspi-accessible-dbus-property valuator atspi-interface-value
 				  "minimumIncrement"))
 
@@ -1078,6 +1091,7 @@ precision of a double precision value on the platform."
 If `atspi-accessible-states' contains editable
  (setf (atspi-value-current-value valuator) new-value)
 can be used to change the current value."
+  (check-type valuator atspi-value)
   (atspi-accessible-dbus-property valuator atspi-interface-value
 				  "currentValue"))
 
