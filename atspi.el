@@ -591,15 +591,11 @@ See also `atspi-accessible-child-count'."
     (mapcar (lambda (dbus-path) (make-atspi-accessible dbus-service dbus-path))
 	    (if atspi-cache-mode
 		(atspi-cache-plist-get accessible :children)
-	      (let (children)
-		(dotimes (index (atspi-accessible-property
-				 accessible atspi-interface-accessible
-				 "childCount")
-				(nreverse children))
-		  (push (atspi-call-accessible-method accessible
-						      "getChildAtIndex"
-						      :int32 index)
-			children)))))))
+	      (loop for index to (atspi-accessible-property
+				  accessible atspi-interface-accessible
+				  "childCount")
+		    collect (atspi-call-accessible-method
+			     accessible "getChildAtIndex" :int32 index))))))
 
 (defun atspi-accessible-child-count (accessible)
   "The number of children contained by this ACCESSIBLE."
