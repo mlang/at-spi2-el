@@ -604,6 +604,16 @@ See also `atspi-accessible-child-count'."
     (atspi-accessible-dbus-property accessible atspi-interface-accessible
 				    "childCount")))
 
+(defun atspi-accessible-child-at (accessible index)
+  "Get the child of ACCESSIBLE at INDEX."
+  (check-type index integer)
+  (make-atspi-accessible
+   (atspi-accessible-dbus-service accessible)
+   (if atspi-cache-mode
+       (nth index (atspi-cache-plist-get accessible :children))
+     (atspi-call-accessible-method accessible
+				   "getChildAtIndex" :int32 index))))
+
 (defun atspi-accessible-index-in-parent (accessible)
   "Get the index of ACCESSIBLE in its parent's child list."
   (if atspi-cache-mode
@@ -630,21 +640,20 @@ See also `atspi-accessible-child-count'."
   "Return the previous sibling of ACCESSIBLE.
 If ACCESSIBLE is the first element of its parent's child list nil is returned."
   (let ((index-in-parent (atspi-accessible-index-in-parent accessible)))
-    (when index-in-parent
-      (let ((siblings (atspi-accessible-children (atspi-accessible-parent
-						  accessible))))
-	(when (> index-in-parent 0)
-	  (nth (1- index-in-parent) siblings))))))
+    (when (and index-in-parent (> index-in-parent 0))
+      (atspi-accessible-child-at (atspi-accessible-parent accessible)
+				 (1- index-in-parent)))))
 
 (defun atspi-accessible-next-sibling (accessible)
   "Return the next sibling of ACCESSIBLE.
 If ACCESSIBLE is the last element of its parent's child list nil is returned."
-  (let ((index-in-parent (atspi-accessible-index-in-parent accessible)))
-    (when index-in-parent
-      (let ((siblings (atspi-accessible-children (atspi-accessible-parent
-						  accessible))))
-	(when (> (1- (length siblings)) index-in-parent)
-	  (nth (1+ index-in-parent) siblings))))))
+  (let ((index (atspi-accessible-index-in-parent accessible)))
+    (when index
+      (let* ((parent (atspi-accessible-parent accessible))
+	     (child-count (atspi-accessible-child-count parent)))
+	(setq index (1+ index))
+	(when (> child-count index)
+	  (atspi-accessible-child-at parent index))))))
 
 (defun atspi-accessible-name (accessible)
   "A (short) string representing ACCESSIBLE's name."
